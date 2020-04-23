@@ -27,10 +27,11 @@ class configs(DefaultConfigs):
         #########################
         #    Preprocessing      #
         #########################
-
-        self.root_dir = '/home/gregor/networkdrives/E130-Personal/Goetz/Datenkollektive/Lungendaten/Nodules_LIDC_IDRI'
-        self.raw_data_dir = '{}/new_nrrd'.format(self.root_dir)
-        self.pp_dir = '/media/gregor/HDD2TB/data/lidc/lidc_mdt'
+        
+        datasets_dir = os.getenv('MDT_DATA_DIR')
+        self.root_dir = os.path.join(datasets_dir, 'MDT-LIDC-IDRI')
+        self.raw_data_dir = '{}/NRRDs'.format(self.root_dir)
+        self.pp_dir = os.path.join(datasets_dir, 'MDT-PP')
         self.target_spacing = (0.7, 0.7, 1.25)
 
         #########################
@@ -52,7 +53,7 @@ class configs(DefaultConfigs):
         # path to preprocessed data.
         self.pp_name = 'lidc_mdt'
         self.input_df_name = 'info_df.pickle'
-        self.pp_data_path = '/media/gregor/HDD2TB/data/lidc/{}'.format(self.pp_name)
+        self.pp_data_path = self.pp_dir
         self.pp_test_data_path = self.pp_data_path #change if test_data in separate folder.
 
         # settings for deployment in cloud.

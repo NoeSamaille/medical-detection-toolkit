@@ -67,42 +67,45 @@ def pp_patient(inputs):
     img_arr = (img_arr - np.mean(img_arr)) / np.std(img_arr).astype(np.float16)
 
     df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
-    df = df[df.PatientID == pid]
+    df = df[df.Patient_ID == pid]
 
     final_rois = np.zeros_like(img_arr, dtype=np.uint8)
     mal_labels = []
     roi_ids = set([ii.split('.')[0].split('_')[-1] for ii in os.listdir(path) if '.nii.gz' in ii])
 
     rix = 1
-    for rid in roi_ids:
-        roi_id_paths = [ii for ii in os.listdir(path) if '{}.nii'.format(rid) in ii]
-        nodule_ids = [ii.split('_')[2].lstrip("0") for ii in roi_id_paths]
-        rater_labels = [df[df.NoduleID == int(ii)].Malignancy.values[0] for ii in nodule_ids]
-        rater_labels.extend([0] * (4-len(rater_labels)))
-        mal_label = np.mean([ii for ii in rater_labels if ii > -1])
-        roi_rater_list = []
-        for rp in roi_id_paths:
-            roi = sitk.ReadImage(os.path.join(cf.raw_data_dir, pid, rp))
-            roi_arr = sitk.GetArrayFromImage(roi).astype(np.uint8)
-            roi_arr = resample_array(roi_arr, roi.GetSpacing(), cf.target_spacing)
-            assert roi_arr.shape == img_arr.shape, [roi_arr.shape, img_arr.shape, pid, roi.GetSpacing()]
-            for ix in range(len(img_arr.shape)):
-                npt.assert_almost_equal(roi.GetSpacing()[ix], img.GetSpacing()[ix])
-            roi_rater_list.append(roi_arr)
-        roi_rater_list.extend([np.zeros_like(roi_rater_list[-1])]*(4-len(roi_id_paths)))
-        roi_raters = np.array(roi_rater_list)
-        roi_raters = np.mean(roi_raters, axis=0)
-        roi_raters[roi_raters < 0.5] = 0
-        if np.sum(roi_raters) > 0:
-            mal_labels.append(mal_label)
-            final_rois[roi_raters >= 0.5] = rix
-            rix += 1
-        else:
-            # indicate rois suppressed by majority voting of raters
-            print('suppressed roi!', roi_id_paths)
-            with open(os.path.join(cf.pp_dir, 'suppressed_rois.txt'), 'a') as handle:
-                handle.write(" ".join(roi_id_paths))
-
+    try:
+        for rid in roi_ids:
+            roi_id_paths = [ii for ii in os.listdir(path) if '{}.nii'.format(rid) in ii]
+            nodule_ids = [ii.split('_')[2].lstrip("0") for ii in roi_id_paths]
+            rater_labels = [df[df.Nodule_Str == int(ii)].malignancy.values[0] for ii in nodule_ids]
+            rater_labels.extend([0] * (4-len(rater_labels)))
+            mal_label = np.mean([ii for ii in rater_labels if ii > -1])
+            roi_rater_list = []
+            for rp in roi_id_paths:
+                roi = sitk.ReadImage(os.path.join(cf.raw_data_dir, pid, rp))
+                roi_arr = sitk.GetArrayFromImage(roi).astype(np.uint8)
+                roi_arr = resample_array(roi_arr, roi.GetSpacing(), cf.target_spacing)
+                assert roi_arr.shape == img_arr.shape, [roi_arr.shape, img_arr.shape, pid, roi.GetSpacing()]
+                for ix in range(len(img_arr.shape)):
+                    npt.assert_almost_equal(roi.GetSpacing()[ix], img.GetSpacing()[ix])
+                roi_rater_list.append(roi_arr)
+            roi_rater_list.extend([np.zeros_like(roi_rater_list[-1])]*(4-len(roi_id_paths)))
+            roi_raters = np.array(roi_rater_list)
+            roi_raters = np.mean(roi_raters, axis=0)
+            roi_raters[roi_raters < 0.5] = 0
+            if np.sum(roi_raters) > 0:
+                mal_labels.append(mal_label)
+                final_rois[roi_raters >= 0.5] = rix
+                rix += 1
+            else:
+                # indicate rois suppressed by majority voting of raters
+                print('suppressed roi!', roi_id_paths)
+                with open(os.path.join(cf.pp_dir, 'suppressed_rois.txt'), 'a') as handle:
+                    handle.write(" ".join(roi_id_paths))
+    except Exception as e:
+        print("Error {}".format(pid), e)
+                    
     fg_slices = [ii for ii in np.unique(np.argwhere(final_rois != 0)[:, 0])]
     mal_labels = np.array(mal_labels)
     assert len(mal_labels) + 1 == len(np.unique(final_rois)), [len(mal_labels), np.unique(final_rois), pid]
@@ -113,6 +116,7 @@ def pp_patient(inputs):
     with open(os.path.join(cf.pp_dir, 'meta_info_{}.pickle'.format(pid)), 'wb') as handle:
         meta_info_dict = {'pid': pid, 'class_target': mal_labels, 'spacing': img.GetSpacing(), 'fg_slices': fg_slices}
         pickle.dump(meta_info_dict, handle)
+    print('done processing {}'.format(pid))
 
 
 
@@ -142,8 +146,6 @@ if __name__ == "__main__":
     p1 = pool.map(pp_patient, enumerate(paths))
     pool.close()
     pool.join()
-    # for i in enumerate(paths):
-    #     pp_patient(i)
 
     aggregate_meta_info(cf.pp_dir)
     subprocess.call('cp {} {}'.format(os.path.join(cf.pp_dir, 'info_df.pickle'), os.path.join(cf.pp_dir, 'info_df_bk.pickle')), shell=True)
