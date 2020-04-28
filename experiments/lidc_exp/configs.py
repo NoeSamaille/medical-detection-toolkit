@@ -28,7 +28,7 @@ class configs(DefaultConfigs):
         #    Preprocessing      #
         #########################
         
-        datasets_dir = os.getenv('MDT_DATA_DIR')
+        datasets_dir = os.getenv('MDT_DATASETS_DIR')
         self.root_dir = os.path.join(datasets_dir, 'MDT-LIDC-IDRI')
         self.raw_data_dir = f'{self.root_dir}/NRRDs'
         self.pp_dir = os.path.join(datasets_dir, 'MDT-PP')
