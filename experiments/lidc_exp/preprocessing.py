@@ -14,12 +14,6 @@
 # limitations under the License.
 # ==============================================================================
 
-'''
-This preprocessing script loads nrrd files obtained by the data conversion tool: https://github.com/MIC-DKFZ/LIDC-IDRI-processing/tree/v1.0.1
-After applying preprocessing, images are saved as numpy arrays and the meta information for the corresponding patient is stored
-as a line in the dataframe saved as info_df.pickle.
-'''
-
 import os, sys
 from pathlib import Path
 import SimpleITK as sitk

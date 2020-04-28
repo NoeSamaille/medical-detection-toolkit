@@ -30,7 +30,7 @@ class configs(DefaultConfigs):
         
         datasets_dir = os.getenv('MDT_DATA_DIR')
         self.root_dir = os.path.join(datasets_dir, 'MDT-LIDC-IDRI')
-        self.raw_data_dir = '{}/NRRDs'.format(self.root_dir)
+        self.raw_data_dir = f'{self.root_dir}/NRRDs'
         self.pp_dir = os.path.join(datasets_dir, 'MDT-PP')
         self.target_spacing = (0.7, 0.7, 1.25)
 
