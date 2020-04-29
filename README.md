@@ -36,8 +36,9 @@ git clone https://gitlab.com/PSLC/ia-medical/medical-detection-toolkit -b torch1
 cd medicaldetectiontoolkit
 conda create --name mdt --clone wmlce
 conda activate mdt
-pip install batchgenerator
+pip install /path/to/install-files/SimpleITK-1.2.0+gd6026-cp37-cp37m-linux_ppc64le.whl
 pip install ./custom_extensions/nms
+pip install batchgenerators pynrrd pylidc
 ```
 
 #### Prepare data
@@ -46,12 +47,9 @@ To prepare the data from LIDC dataset, I've created the `experiments/lidc_exp/pr
 
 From [LIDC vanilla dataset](https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI) (saved as `path/to/LIDC-IDRI-VANILLA`) and [LIDC Standardized representation](https://wiki.cancerimagingarchive.net/display/DOI/Standardized+representation+of+the+TCIA+LIDC-IDRI+annotations+using+DICOM) (saved as `path/to/LIDC-IDRI`), I use `pylidc` to get a 50% consensus of each annotated nodules and save them as well as the patient's CT scan in `.nrrd` format. Then, I build a `characteristics.csv` file containing nodule identifier along with their malignancy.
 
-You need access to `pylidc` then modify `~/.pylidcrc` and set `path` to the path to `path/to/LIDC-IDRI-VANILLA`:
-```
-pip install pylidc
-```
+You therefore need access to `pylidc` then modify `~/.pylidcrc` and set `path` to the path to `path/to/LIDC-IDRI-VANILLA`.
 
-You can the run the script: 
+Then you can the run the script: 
 ```
 cd experiments/lidc_exp
 MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python prepare.py

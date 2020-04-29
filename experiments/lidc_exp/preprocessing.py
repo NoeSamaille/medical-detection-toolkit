@@ -24,6 +24,7 @@ import numpy.testing as npt
 from skimage.transform import resize
 import subprocess
 import pickle
+import time
 
 PROJECT_ROOT = Path(__file__).absolute().parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
@@ -85,7 +86,6 @@ def pp_patient(inputs):
                     
     fg_slices = [ii for ii in np.unique(np.argwhere(final_rois != 0)[:, 0])]
     mal_labels = np.array(mal_labels)
-    assert len(mal_labels) + 1 == len(np.unique(final_rois)), [len(mal_labels), np.unique(final_rois), pid]
 
     np.save(os.path.join(cf.pp_dir, '{}_rois.npy'.format(pid)), final_rois)
     np.save(os.path.join(cf.pp_dir, '{}_img.npy'.format(pid)), img_arr)
@@ -110,6 +110,8 @@ def aggregate_meta_info(exp_dir):
 
 if __name__ == "__main__":
 
+    start_time = time.time()
+
     cf_file = utils.import_module("cf", "configs.py")
     cf = cf_file.configs()
 
@@ -118,10 +120,12 @@ if __name__ == "__main__":
     if not os.path.exists(cf.pp_dir):
         os.mkdir(cf.pp_dir)
 
-    pool = Pool(processes=os.cpu_count())
+    pool = Pool(processes=110)
     p1 = pool.map(pp_patient, enumerate(paths))
     pool.close()
     pool.join()
 
     aggregate_meta_info(cf.pp_dir)
     subprocess.call('cp {} {}'.format(os.path.join(cf.pp_dir, 'info_df.pickle'), os.path.join(cf.pp_dir, 'info_df_bk.pickle')), shell=True)
+
+    print(f"------ Ellapsed time : {time.time() - start_time} (s) ------")
