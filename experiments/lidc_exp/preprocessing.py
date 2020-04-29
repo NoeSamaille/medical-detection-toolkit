@@ -14,7 +14,7 @@
 # limitations under the License.
 # ==============================================================================
 
-import os, sys
+import os, sys, glob
 from pathlib import Path
 import SimpleITK as sitk
 import numpy as np
@@ -28,7 +28,6 @@ import pickle
 PROJECT_ROOT = Path(__file__).absolute().parent.parent.parent
 sys.path.append(str(PROJECT_ROOT))
 import utils.exp_utils as utils
-
 
 
 def resample_array(src_imgs, src_spacing, target_spacing):
@@ -51,7 +50,7 @@ def pp_patient(inputs):
 
     ix, path = inputs
     pid = path.split('/')[-1]
-    img = sitk.ReadImage(os.path.join(path, '{}_ct_scan.nrrd'.format(pid)))
+    img = sitk.ReadImage(os.path.join(path, '{}_CT.nrrd'.format(pid)))
     img_arr = sitk.GetArrayFromImage(img)
     print('processing {}'.format(pid), img.GetSpacing(), img_arr.shape)
     img_arr = resample_array(img_arr, img.GetSpacing(), cf.target_spacing)
@@ -60,19 +59,18 @@ def pp_patient(inputs):
     img_arr = img_arr.astype(np.float32)
     img_arr = (img_arr - np.mean(img_arr)) / np.std(img_arr).astype(np.float16)
 
-    df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
-    df = df[df.Patient_ID == pid]
+    df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=',')
+    df = df[df.patient_id == pid]
 
     final_rois = np.zeros_like(img_arr, dtype=np.uint8)
     mal_labels = []
-    roi_ids = set([ii.split('.')[0].split('_')[-1] for ii in os.listdir(path) if '.nii.gz' in ii])
+    roi_ids = set([os.path.splitext(ii)[0] for ii in os.listdir(path) if '_nod_' in ii])
 
     rix = 1
     try:
         for rid in roi_ids:
-            roi_id_paths = [ii for ii in os.listdir(path) if '{}.nii'.format(rid) in ii]
-            nodule_ids = [ii.split('_')[2].lstrip("0") for ii in roi_id_paths]
-            rater_labels = [df[df.Nodule_Str == int(ii)].malignancy.values[0] for ii in nodule_ids]
+            roi_id_paths = [ii for ii in os.listdir(path) if rid in ii]
+            rater_labels = [df[df.nodule_id == rid].malignancy.values[0]]
             rater_labels.extend([0] * (4-len(rater_labels)))
             mal_label = np.mean([ii for ii in rater_labels if ii > -1])
             roi_rater_list = []
@@ -111,7 +109,6 @@ def pp_patient(inputs):
         meta_info_dict = {'pid': pid, 'class_target': mal_labels, 'spacing': img.GetSpacing(), 'fg_slices': fg_slices}
         pickle.dump(meta_info_dict, handle)
     print('done processing {}'.format(pid))
-
 
 
 def aggregate_meta_info(exp_dir):
