@@ -1,6 +1,3 @@
-
-
-
 [<img src="https://img.shields.io/badge/chat-slack%20channel-75BBC4.svg">](https://join.slack.com/t/mdtoolkit/shared_invite/enQtNTQ3MjY2MzE0MDg2LWNjY2I2Njc5MTY0NmM0ZWIxNmQwZDRhYzk2MDdhM2QxYjliYTcwYzhkNTAxYmRkMDA0MjcyNDMyYjllNTZhY2M)
 <p align="center"><img src="assets/mdt_logo_2.png"  width=450></p><br>
 
@@ -31,6 +28,52 @@ of Segmentation Supervision for Medical Object Detection" </a>, 2018
 Please cite the original publication [3].
 
 ## Installation
+
+### Nodule Detection on Waston Machine Learning - Community Edition (IBM Power Systems)
+
+```
+git clone https://gitlab.com/PSLC/ia-medical/medical-detection-toolkit -b torch1x
+cd medicaldetectiontoolkit
+conda create --name mdt --clone wmlce
+conda activate mdt
+pip install batchgenerator
+pip install ./custom_extensions/nms
+```
+
+#### Prepare data
+
+To prepare the data from LIDC dataset, I've created the `experiments/lidc_exp/prepare.py` script:
+
+From [LIDC vanilla dataset](https://wiki.cancerimagingarchive.net/display/Public/LIDC-IDRI) (saved as `path/to/LIDC-IDRI-VANILLA`) and [LIDC Standardized representation](https://wiki.cancerimagingarchive.net/display/DOI/Standardized+representation+of+the+TCIA+LIDC-IDRI+annotations+using+DICOM) (saved as `path/to/LIDC-IDRI`), I use `pylidc` to get a 50% consensus of each annotated nodules and save them as well as the patient's CT scan in `.nrrd` format. Then, I build a `characteristics.csv` file containing nodule identifier along with their malignancy.
+
+You need access to `pylidc` then modify `~/.pylidcrc` and set `path` to the path to `path/to/LIDC-IDRI-VANILLA`:
+```
+pip install pylidc
+```
+
+You can the run the script: 
+```
+cd experiments/lidc_exp
+MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python prepare.py
+```
+
+#### Run preprocessing
+
+```
+cd experiments/lidc_exp
+MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python preprocessing.py
+```
+
+#### Run training
+
+```
+MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python exec.py --mode train \
+    --exp_source experiments/lidc_exp \
+    --exp_dir experiments/test_exp
+```
+
+### Classic Setup
+
 Setup package in virtual environment
 ```
 git clone https://github.com/MIC-DKFZ/medicaldetectiontoolkit.git.
