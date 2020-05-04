@@ -221,7 +221,6 @@ if __name__ == '__main__':
             logger.set_logfile(fold=fold)
             test(logger)
 
-
     # load raw predictions saved by predictor during testing, run aggregation algorithms and evaluation.
     elif args.mode == 'analysis':
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)

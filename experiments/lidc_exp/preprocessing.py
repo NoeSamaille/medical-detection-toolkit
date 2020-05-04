@@ -56,7 +56,6 @@ def pp_patient(inputs):
     print('processing {}'.format(pid), img.GetSpacing(), img_arr.shape)
     img_arr = resample_array(img_arr, img.GetSpacing(), cf.target_spacing)
     img_arr = np.clip(img_arr, -1200, 600)
-    #img_arr = (1200 + img_arr) / (600 + 1200) * 255  # a+x / (b-a) * (c-d) (c, d = new)
     img_arr = img_arr.astype(np.float32)
     img_arr = (img_arr - np.mean(img_arr)) / np.std(img_arr).astype(np.float16)
 
