@@ -14,20 +14,22 @@
 # limitations under the License.
 # ==============================================================================
 
-import os
+import os, time
+from multiprocessing import Pool
+
 import numpy as np
 import pandas as pd
 import torch
-
 from sklearn.metrics import roc_auc_score, average_precision_score
 from sklearn.metrics import roc_curve, precision_recall_curve
+
+import utils.exp_utils as utils
 import utils.model_utils as mutils
 import plotting
-from multiprocessing import Pool
+
 
 
 class Evaluator():
-
 
     def __init__(self, cf, logger, mode='test'):
         """
@@ -36,6 +38,14 @@ class Evaluator():
         self.cf = cf
         self.logger = logger
         self.mode = mode
+
+        self.plot_dir = self.cf.test_dir if self.mode == "test" else self.cf.plot_dir
+        if self.cf.plot_prediction_histograms:
+            self.hist_dir = os.path.join(self.plot_dir, 'histograms')
+            os.makedirs(self.hist_dir, exist_ok=True)
+        if self.cf.plot_stat_curves:
+            self.curves_dir = os.path.join(self.plot_dir, 'stat_curves')
+            os.makedirs(self.curves_dir, exist_ok=True)
 
 
     def eval_losses(self, batch_res_dicts):
@@ -321,11 +331,11 @@ class Evaluator():
                             stats_dict['auc'] if stats_dict['auc'] > 0 else np.nan)
 
                 if self.cf.plot_prediction_histograms:
-                    out_filename = os.path.join(
-                        self.cf.plot_dir, 'pred_hist_{}_{}_{}_cl{}'.format(
-                            self.cf.fold, 'val' if 'val' in self.mode else self.mode, score_level, cl))
+                    out_filename = os.path.join(self.hist_dir, 'pred_hist_{}_{}_{}_cl{}'.format(
+                        self.cf.fold, 'val' if 'val' in self.mode else self.mode, score_level, cl))
                     type_list = None if score_level == 'patient' else spec_df.det_type.tolist()
-                    plotting.plot_prediction_hist(spec_df.class_label.tolist(), spec_df.pred_score.tolist(), type_list, out_filename)
+                    utils.split_off_process(plotting.plot_prediction_hist, spec_df.class_label.tolist(),
+                                            spec_df.pred_score.tolist(), type_list, out_filename)
 
                 all_stats.append(stats_dict)
 
@@ -340,9 +350,8 @@ class Evaluator():
                     self.logger.info('results from scanning over det_threshs:', [[i, j] for i, j in zip(conf_threshs, aps)])
 
         if self.cf.plot_stat_curves:
-            out_filename = os.path.join(self.cf.plot_dir, '{}_{}_stat_curves'.format(self.cf.fold, self.mode))
-            plotting.plot_stat_curves(all_stats, out_filename)
-
+            out_filename = os.path.join(self.curves_dir, '{}_{}_stat_curves'.format(self.cf.fold, self.mode))
+            utils.split_off_process(plotting.plot_stat_curves, all_stats, out_filename)
 
         # get average stats over foreground classes on roi level.
         avg_ap = np.mean([d['ap'] for d in all_stats if 'rois' in d['name']])
@@ -361,6 +370,52 @@ class Evaluator():
         return all_stats, monitor_metrics
 
 
+    def write_to_results_table(self, stats, metrics_to_score, out_path):
+        """Write overall results to a common inter-experiment table.
+        :param metrics_to_score:
+        :return:
+        """
+
+        with open(out_path, 'a') as handle:
+            # ---column headers---
+            handle.write('\n{},'.format("Experiment Name"))
+            handle.write('{},'.format("Time Stamp"))
+            handle.write('{},'.format("Samples Seen"))
+            handle.write('{},'.format("Spatial Dim"))
+            handle.write('{},'.format("Patch Size"))
+            handle.write('{},'.format("CV Folds"))
+            handle.write('{},'.format("WBC IoU"))
+            handle.write('{},'.format("Merge-2D-to-3D IoU"))
+            for s in stats:
+                #if self.cf.class_dict[self.cf.patient_class_of_interest] in s['name'] or "average" in s["name"]:
+                for metric in metrics_to_score:
+                    if metric in s.keys() and not np.isnan(s[metric]):
+                        if metric == 'ap':
+                            handle.write('{} : {}_{},'.format(s['name'], metric.upper(),
+                                                              "_".join((np.array(self.cf.ap_match_ious) * 100)
+                                                                       .astype("int").astype("str"))))
+                        else:
+                            handle.write('{} : {},'.format(s['name'], metric.upper()))
+                    else:
+                        print("WARNING: skipped metric {} since not avail".format(metric))
+            handle.write('\n')
+
+            # --- columns content---
+            handle.write('{},'.format(self.cf.exp_dir.split(os.sep)[-1]))
+            handle.write('{},'.format(time.strftime("%d%b%y %H:%M:%S")))
+            handle.write('{},'.format(self.cf.num_epochs * self.cf.num_train_batches * self.cf.batch_size))
+            handle.write('{}D,'.format(self.cf.dim))
+            handle.write('{},'.format("x".join([str(self.cf.patch_size[i]) for i in range(self.cf.dim)])))
+            handle.write('{},'.format(str(self.test_df.fold.unique().tolist()).replace(",", "")))
+            handle.write('{},'.format(self.cf.wcs_iou))
+            handle.write('{},'.format(self.cf.merge_3D_iou if self.cf.merge_2D_to_3D_preds else str("N/A")))
+            for s in stats:
+                #if self.cf.class_dict[self.cf.patient_class_of_interest] in s['name'] or "mean" in s["name"]:
+                for metric in metrics_to_score:
+                    if metric in s.keys() and not np.isnan(s[metric]):
+                        handle.write('{:0.3f}, '.format(s[metric]))
+            handle.write('\n')
+
     def score_test_df(self, internal_df=True):
         """
         Writes out resulting scores to text files: First checks for class-internal-df (typically current) fold,
@@ -370,10 +425,10 @@ class Evaluator():
         """
         if internal_df:
 
-            self.test_df.to_pickle(os.path.join(self.cf.exp_dir, '{}_test_df.pickle'.format(self.cf.fold)))
+            self.test_df.to_pickle(os.path.join(self.cf.test_dir, '{}_test_df.pickle'.format(self.cf.fold)))
             stats, _ = self.return_metrics()
 
-            with open(os.path.join(self.cf.exp_dir, 'results.txt'), 'a') as handle:
+            with open(os.path.join(self.cf.test_dir, 'results.txt'), 'a') as handle:
                 handle.write('\n****************************\n')
                 handle.write('\nresults for fold {} \n'.format(self.cf.fold))
                 handle.write('\n****************************\n')
@@ -381,29 +436,30 @@ class Evaluator():
                 for s in stats:
                     handle.write('AUC {:0.4f}  AP {:0.4f} {} \n'.format(s['auc'], s['ap'], s['name']))
 
-        fold_df_paths = [ii for ii in os.listdir(self.cf.exp_dir) if 'test_df.pickle' in ii]
-        if len(fold_df_paths) == self.cf.n_cv_splits:
-            with open(os.path.join(self.cf.exp_dir, 'results.txt'), 'a') as handle:
-                self.cf.fold = 'overall'
-                dfs_list = [pd.read_pickle(os.path.join(self.cf.exp_dir, ii)) for ii in fold_df_paths]
-                for ix, df in enumerate(dfs_list):
-                    df['fold'] = ix
-                self.test_df = pd.concat(dfs_list)
-                stats, _ = self.return_metrics()
-                handle.write('\n****************************\n')
-                handle.write('\nOVERALL RESULTS \n')
-                handle.write('\n****************************\n')
-                handle.write('\ndf shape \n  \n'.format(self.test_df.shape))
-                for s in stats:
-                    handle.write('\nAUC {:0.4f} (mu {:0.4f})  AP {:0.4f} (mu {:0.4f})  {}\n '
-                                 .format(s['auc'], s['mean_auc'], s['ap'], s['mean_ap'], s['name']))
-                results_table_path = os.path.join(("/").join(self.cf.exp_dir.split("/")[:-1]), 'results_table.txt')
-                with open(results_table_path, 'a') as handle2:
-                    for s in stats:
-                        handle2.write('\nAUC {:0.4f} (mu {:0.4f})  AP {:0.4f} (mu {:0.4f})  {} {}'
-                                      .format(s['auc'], s['mean_auc'], s['ap'], s['mean_ap'], s['name'], self.cf.exp_dir.split('/')[-1]))
-                    handle2.write('\n')
+            fold_df_paths = [ii for ii in os.listdir(self.cf.test_dir) if ('test_df.pickle' in ii and not 'overall' in ii)]
+            if len(fold_df_paths) == self.cf.n_cv_splits:
+                results_table_path = os.path.join((os.sep).join(self.cf.exp_dir.split(os.sep)[:-1]), 'results_table.csv')
 
+                if not self.cf.hold_out_test_set or not self.cf.ensemble_folds:
+                    with open(os.path.join(self.cf.test_dir, 'results.txt'), 'a') as handle:
+                        self.cf.fold = 'overall'
+                        dfs_list = [pd.read_pickle(os.path.join(self.cf.test_dir, ii)) for ii in fold_df_paths]
+                        for ix, df in enumerate(dfs_list):
+                            df['fold'] = ix
+                        self.test_df = pd.concat(dfs_list)
+                        stats, _ = self.return_metrics()
+                        handle.write('\n****************************\n')
+                        handle.write('\nOVERALL RESULTS \n')
+                        handle.write('\n****************************\n')
+                        handle.write('\ndf shape \n  \n'.format(self.test_df.shape))
+                        for s in stats:
+                            handle.write('\nAUC {:0.4f} (mu {:0.4f})  AP {:0.4f} (mu {:0.4f})  {}\n '
+                                         .format(s['auc'], s['mean_auc'], s['ap'], s['mean_ap'], s['name']))
+                    metrics_to_score = ["auc", "mean_auc", "ap", "mean_ap"]
+                    self.write_to_results_table(stats, metrics_to_score, out_path=results_table_path)
+                else:
+                    metrics_to_score = ["auc", "ap"]
+                    self.write_to_results_table(stats, metrics_to_score, out_path=results_table_path)
 
 
 def get_roi_ap_from_df(inputs):

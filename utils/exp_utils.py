@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-import sys
+from typing import Iterable, Tuple, Any, Union
+import os, sys
 import subprocess
-import os
+from multiprocessing import Process
 
-import plotting
 import importlib.util
 import pickle
 
@@ -29,12 +29,37 @@ import numpy as np
 import torch
 import pandas as pd
 
+def split_off_process(target, *args, daemon: bool=False, **kwargs):
+    """Start a process that won't block parent script.
+    No join(), no return value. If daemon=False: before parent exits, it waits for this to finish.
+    :param target: the target function of the process.
+    :params *args: args to pass to target.
+    :param daemon: if False: before parent exits, it waits for this process to finish.
+    :params **kwargs: kwargs to pass to target.
+    """
+    p = Process(target=target, args=tuple(args), kwargs=kwargs, daemon=daemon)
+    p.start()
+    return p
+
+def get_formatted_duration(seconds: float, format: str="hms") -> str:
+    """Format a time in seconds.
+    :param format: "hms" for hours mins secs or "ms" for min secs.
+    """
+    mins, secs = divmod(seconds, 60)
+    if format == "ms":
+        t = "{:d}m:{:02d}s".format(int(mins), int(secs))
+    elif format == "hms":
+        h, mins = divmod(mins, 60)
+        t = "{:d}h:{:02d}m:{:02d}s".format(int(h), int(mins), int(secs))
+    else:
+        raise Exception("Format {} not available, only 'hms' or 'ms'".format(format))
+    return t
 
 class CombinedLogger(object):
     """Combine console and tensorboard logger and record system metrics.
     """
 
-    def __init__(self, name, log_dir, server_env=True, fold="all"):
+    def __init__(self, name: str, log_dir: str, server_env: bool=True, fold: Union[int, str]="all"):
         self.pylogger = logging.getLogger(name)
         self.tboard = SummaryWriter(log_dir=os.path.join(log_dir, "tboard"))
         self.log_dir = log_dir
@@ -61,7 +86,7 @@ class CombinedLogger(object):
                 return getattr(obj, attr)
         print("logger attr not found")
 
-    def set_logfile(self, fold=None, log_file=None):
+    def set_logfile(self, fold: Union[int, str, None]=None, log_file: Union[str, None]=None):
         if fold is not None:
             self.fold = str(fold)
         if log_file is None:
@@ -94,8 +119,6 @@ class CombinedLogger(object):
         for key in ['train', 'val']:
             # series = {k:np.array(v[-1]) for (k,v) in metrics[key].items() if not np.isnan(v[-1]) and not 'Bin_Stats' in k}
             loss_series = {}
-            unc_series = {}
-            bin_stat_series = {}
             mon_met_series = {}
             for tag, val in metrics[key].items():
                 val = val[-1]  # maybe remove list wrapping, recording in evaluator?
@@ -120,7 +143,7 @@ class CombinedLogger(object):
         #self.tboard.close()
 
 
-def get_logger(exp_dir, server_env=False):
+def get_logger(exp_dir: str, server_env: bool=False) -> CombinedLogger:
     """
     creates logger instance. writing out info to file, to terminal and to tensorboard.
     :param exp_dir: experiment directory, where exec.log file is stored.
@@ -189,14 +212,13 @@ def prep_exp(dataset_path, exp_path, server_env, use_stored_settings=True, is_tr
     if not os.path.exists(cf.plot_dir):
         os.mkdir(cf.plot_dir)
     cf.experiment_name = exp_path.split("/")[-1]
-    cf.server_env = server_env
     cf.created_fold_id_pickle = False
 
     return cf
 
 
 
-def import_module(name, path):
+def import_module(name: str, path: str):
     """
     correct way of importing a module dynamically in python 3.
     :param name: name given to module instance.
@@ -208,6 +230,69 @@ def import_module(name, path):
     spec.loader.exec_module(module)
     return module
 
+
+def set_params_flag(module: torch.nn.Module, flag: Tuple[str, Any], check_overwrite: bool = True) -> torch.nn.Module:
+    """Set an attribute for all passed module parameters.
+
+    :param flag: tuple (str attribute name : attr value)
+    :param check_overwrite: if True, assert that attribute not already exists.
+
+    """
+    for param in module.parameters():
+        if check_overwrite:
+            assert not hasattr(param, flag[0]), \
+                "param {} already has attr {} (w/ val {})".format(param, flag[0], getattr(param, flag[0]))
+        setattr(param, flag[0], flag[1])
+    return module
+
+def parse_params_for_optim(net: torch.nn.Module, weight_decay: float = 0., exclude_from_wd: Iterable = ("norm",)) -> list:
+    """Split network parameters into weight-decay dependent groups for the optimizer.
+    :param net: network.
+    :param weight_decay: weight decay value for the parameters that it is applied to. excluded parameters will have
+        weight decay 0.
+    :param exclude_from_wd: List of strings of parameter-group names to exclude from weight decay. Options: "norm", "bias".
+    :return:
+    """
+    if weight_decay is None:
+        weight_decay = 0.
+    # pytorch implements parameter groups as dicts {'params': ...} and
+    # weight decay as p.data.mul_(1 - group['lr'] * group['weight_decay'])
+    norm_types = [torch.nn.BatchNorm1d, torch.nn.BatchNorm2d, torch.nn.BatchNorm3d,
+                  torch.nn.InstanceNorm1d, torch.nn.InstanceNorm2d, torch.nn.InstanceNorm3d,
+                  torch.nn.LayerNorm, torch.nn.GroupNorm, torch.nn.SyncBatchNorm, torch.nn.LocalResponseNorm]
+    level_map = {"bias": "weight",
+                 "norm": "module"}
+    type_map = {"norm": norm_types}
+
+    exclude_from_wd = [str(name).lower() for name in exclude_from_wd]
+    exclude_weight_names = [k for k, v in level_map.items() if k in exclude_from_wd and v == "weight"]
+    exclude_module_types = tuple([type_ for k, v in level_map.items() if (k in exclude_from_wd and v == "module")
+                                  for type_ in type_map[k]])
+
+    if exclude_from_wd:
+        print("excluding {} from weight decay.".format(exclude_from_wd))
+
+    for module in net.modules():
+        if isinstance(module, exclude_module_types):
+            set_params_flag(module, ("no_wd", True))
+    for param_name, param in net.named_parameters():
+        if np.any([ename in param_name for ename in exclude_weight_names]):
+            setattr(param, "no_wd", True)
+
+    with_dec, no_dec = [], []
+    for param in net.parameters():
+        if hasattr(param, "no_wd") and param.no_wd == True:
+            no_dec.append(param)
+        else:
+            with_dec.append(param)
+    orig_ps = sum(p.numel() for p in net.parameters())
+    with_ps = sum(p.numel() for p in with_dec)
+    wo_ps = sum(p.numel() for p in no_dec)
+    assert orig_ps == with_ps + wo_ps, "orig n parameters {} unequals sum of with wd {} and w/o wd {}."\
+        .format(orig_ps, with_ps, wo_ps)
+
+    groups = [{'params': gr, 'weight_decay': wd} for (gr, wd) in [(no_dec, 0.), (with_dec, weight_decay)] if len(gr)>0]
+    return groups
 
 
 class ModelSelector:
@@ -222,7 +307,8 @@ class ModelSelector:
         self.saved_epochs = [-1] * cf.save_n_models
         self.logger = logger
 
-    def run_model_selection(self, net, optimizer, monitor_metrics, epoch):
+    def run_model_selection(self, net: torch.nn.Module, optimizer: torch.optim.Optimizer,
+                            monitor_metrics: dict, epoch: int):
 
         # take the mean over all selection criteria in each epoch
         non_nan_scores = np.mean(np.array([[0 if (ii is None or np.isnan(ii)) else ii for ii in monitor_metrics['val'][sc]] for sc in self.cf.model_selection_criteria]), 0)
@@ -271,15 +357,15 @@ class ModelSelector:
 
 
 
-def load_checkpoint(checkpoint_path, net, optimizer):
+def load_checkpoint(checkpoint_path: str, net: torch.nn.Module, optimizer: torch.optim.Optimizer) -> Tuple:
 
-    checkpoint_params = torch.load(os.path.join(checkpoint_path, 'params.pth'))
-    net.load_state_dict(checkpoint_params['state_dict'])
-    optimizer.load_state_dict(checkpoint_params['optimizer'])
+    checkpoint = torch.load(os.path.join(checkpoint_path, 'params.pth'))
+    net.load_state_dict(checkpoint['state_dict'])
+    optimizer.load_state_dict(checkpoint['optimizer'])
     with open(os.path.join(checkpoint_path, 'monitor_metrics.pickle'), 'rb') as handle:
         monitor_metrics = pickle.load(handle)
-    starting_epoch = checkpoint_params['epoch'] + 1
-    return starting_epoch, monitor_metrics
+    starting_epoch = checkpoint['epoch'] + 1
+    return starting_epoch, net, optimizer, monitor_metrics
 
 
 
@@ -316,7 +402,7 @@ def create_csv_output(results_list, cf, logger):
     :param results_list: [[patient_results, patient_id], [patient_results, patient_id], ...]
     """
 
-    logger.info('creating csv output file at {}'.format(os.path.join(cf.exp_dir, 'results.csv')))
+    logger.info('creating csv output file at {}'.format(os.path.join(cf.test_dir, 'results.csv')))
     predictions_df = pd.DataFrame(columns = ['patientID', 'predictionID', 'coords', 'score', 'pred_classID'])
     for r in results_list:
 

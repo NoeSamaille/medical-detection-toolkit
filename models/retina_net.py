@@ -136,8 +136,8 @@ def compute_class_loss(anchor_matches, class_pred_logits, shem_poolsize=20):
     pos_indices = torch.nonzero(anchor_matches > 0)
     neg_indices = torch.nonzero(anchor_matches == -1)
 
-    # get positive samples and calucalte loss.
-    if 0 not in pos_indices.size():
+    # get positive samples and calculate loss.
+    if 0 not in pos_indices.shape:
         pos_indices = pos_indices.squeeze(1)
         roi_logits_pos = class_pred_logits[pos_indices]
         targets_pos = anchor_matches[pos_indices]
@@ -147,10 +147,10 @@ def compute_class_loss(anchor_matches, class_pred_logits, shem_poolsize=20):
 
     # get negative samples, such that the amount matches the number of positive samples, but at least 1.
     # get high scoring negatives by applying online-hard-example-mining.
-    if 0 not in neg_indices.size():
+    if 0 not in neg_indices.shape:
         neg_indices = neg_indices.squeeze(1)
         roi_logits_neg = class_pred_logits[neg_indices]
-        negative_count = np.max((1, pos_indices.size()[0]))
+        negative_count = np.max((1, pos_indices.shape[0]))
         roi_probs_neg = F.softmax(roi_logits_neg, dim=1)
         neg_ix = mutils.shem(roi_probs_neg, negative_count, shem_poolsize)
         neg_loss = F.cross_entropy(roi_logits_neg[neg_ix], torch.LongTensor([0] * neg_ix.shape[0]).cuda())
@@ -216,7 +216,7 @@ def refine_detections(anchors, probs, deltas, batch_ixs, cf):
     pre_nms_batch_ixs = batch_ixs[keep_arr[:, 0]]
     pre_nms_anchors = anchors[keep_arr[:, 0]]
     pre_nms_deltas = deltas[keep_arr[:, 0]]
-    keep = torch.arange(pre_nms_scores.size()[0]).long().cuda()
+    keep = torch.arange(pre_nms_scores.shape[0]).long().cuda()
 
     # apply bounding box deltas. re-scale to image coordinates.
     std_dev = torch.from_numpy(np.reshape(cf.rpn_bbox_std_dev, [1, cf.dim * 2])).float().cuda()
@@ -242,7 +242,6 @@ def refine_detections(anchors, probs, deltas, batch_ixs, cf):
             ix_scores = bix_scores[ixs]
             ix_scores, order = ix_scores.sort(descending=True)
             ix_rois = ix_rois[order, :]
-            ix_scores = ix_scores
 
             class_keep = nms.nms(ix_rois, ix_scores, cf.detection_nms_threshold)
 
@@ -386,7 +385,10 @@ class net(nn.Module):
                 'monitor_values': dict of values to be monitored.
         """
         img = batch['data']
-        gt_class_ids = batch['roi_labels']
+        if "roi_labels" in batch.keys():
+            raise Exception("Key for roi-wise class targets changed in v0.1.0 from 'roi_labels' to 'class_target'.\n"
+                            "If you use DKFZ's batchgenerators, please make sure you run version >= 0.20.1.")
+        gt_class_ids = batch['class_target']
         gt_boxes = batch['bb_target']
 
         img = torch.from_numpy(img).float().cuda()
@@ -397,8 +399,6 @@ class net(nn.Module):
         box_results_list = [[] for _ in range(img.shape[0])]
         detections, class_logits, pred_deltas, seg_logits = self.forward(img)
 
-
-
         # loop over batch
         for b in range(img.shape[0]):
 
@@ -406,7 +406,7 @@ class net(nn.Module):
             if len(gt_boxes[b]) > 0:
                 for ix in range(len(gt_boxes[b])):
                     box_results_list[b].append({'box_coords': batch['bb_target'][b][ix],
-                                                'box_label': batch['roi_labels'][b][ix], 'box_type': 'gt'})
+                                                'box_label': batch['class_target'][b][ix], 'box_type': 'gt'})
 
                 # match gt boxes with anchors to generate targets.
                 anchor_class_match, anchor_target_deltas = mutils.gt_anchor_matching(
@@ -445,6 +445,7 @@ class net(nn.Module):
         results_dict['class_loss'] = batch_class_loss.item()
         results_dict['logger_string'] = "loss: {0:.2f}, class: {1:.2f}, bbox: {2:.2f}"\
             .format(loss.item(), batch_class_loss.item(), batch_bbox_loss.item())
+
 
         return results_dict
 

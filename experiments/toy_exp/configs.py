@@ -22,7 +22,7 @@ from default_configs import DefaultConfigs
 
 class configs(DefaultConfigs):
 
-    def __init__(self, server_env=None):
+    def __init__(self, server_env=False):
 
         #########################
         #    Preprocessing      #
@@ -34,19 +34,19 @@ class configs(DefaultConfigs):
         #         I/O           #
         #########################
 
-
         # one out of [2, 3]. dimension the model operates in.
         self.dim = 2
 
         # one out of ['mrcnn', 'retina_net', 'retina_unet', 'detection_unet', 'ufrcnn'].
-        self.model = 'retina_net'
+        self.model = 'retina_unet'
 
         DefaultConfigs.__init__(self, self.model, server_env, self.dim)
 
         # int [0 < dataset_size]. select n patients from dataset for prototyping.
         self.select_prototype_subset = None
         self.hold_out_test_set = True
-        self.n_train_data = 2500
+        # including val set. will be 3/4 train, 1/4 val.
+        self.n_train_val_data = 2500
 
         # choose one of the 3 toy experiments described in https://arxiv.org/pdf/1811.08661.pdf
         # one of ['donuts_shape', 'donuts_pattern', 'circles_scale'].
@@ -103,24 +103,27 @@ class configs(DefaultConfigs):
 
         self.start_filts = 48 if self.dim == 2 else 18
         self.end_filts = self.start_filts * 4 if self.dim == 2 else self.start_filts * 2
-        self.res_architecture = 'resnet50' # 'resnet101' , 'resnet50'
+        self.res_architecture = 'resnet50' # 'resnet101', 'resnet50'
         self.norm = None # one of None, 'instance_norm', 'batch_norm'
-        self.weight_decay = 0
+        # 0 for no weight decay
+        self.weight_decay = 3e-6
+        # which weights to exclude from weight decay, options: ["norm", "bias"].
+        self.exclude_from_wd = ("norm",)
 
-        # one of 'xavier_uniform', 'xavier_normal', or 'kaiming_normal', None (=default = 'kaiming_uniform')
+        # one of 'xavier_uniform', 'xavier_normal', or 'kaiming_normal', None (= default = 'kaiming_uniform')
         self.weight_init = None
 
         #########################
         #  Schedule / Selection #
         #########################
 
-        self.num_epochs = 22
+        self.num_epochs = 28
         self.num_train_batches = 100 if self.dim == 2 else 200
-        self.batch_size = 20 if self.dim == 2 else 8
+        self.batch_size = 16 if self.dim == 2 else 8
 
         self.do_validation = True
         # decide whether to validate on entire patient volumes (like testing) or sampled patches (like training)
-        # the former is morge accurate, while the latter is faster (depending on volume size)
+        # the former is more accurate, while the latter is faster (depending on volume size)
         self.val_mode = 'val_patient' # one of 'val_sampling' , 'val_patient'
         if self.val_mode == 'val_patient':
             self.max_val_patients = None  # if 'None' iterates over entire val_set once.
@@ -130,7 +133,7 @@ class configs(DefaultConfigs):
         # set dynamic_lr_scheduling to True to apply LR scheduling with below settings.
         self.dynamic_lr_scheduling = True
         self.lr_decay_factor = 0.5
-        self.scheduling_patience = int(self.num_train_batches * self.batch_size / 2400)
+        self.scheduling_patience = np.ceil(7200 / (self.num_train_batches * self.batch_size))
         self.scheduling_criterion = 'malignant_ap'
         self.scheduling_mode = 'min' if "loss" in self.scheduling_criterion else 'max'
 
@@ -138,7 +141,7 @@ class configs(DefaultConfigs):
         #   Testing / Plotting  #
         #########################
 
-        # set the top-n-epochs to be saved for temporal averaging in testing.
+        # set the top-n epochs to be saved for temporal averaging in testing.
         self.save_n_models = 5
         self.test_n_epochs = 5
 
@@ -196,10 +199,8 @@ class configs(DefaultConfigs):
         {'detection_unet': self.add_det_unet_configs,
          'mrcnn': self.add_mrcnn_configs,
          'ufrcnn': self.add_mrcnn_configs,
-         'ufrcnn_surrounding': self.add_mrcnn_configs,
          'retina_net': self.add_mrcnn_configs,
          'retina_unet': self.add_mrcnn_configs,
-         'prob_detector': self.add_mrcnn_configs,
         }[self.model]()
 
 
@@ -219,7 +220,7 @@ class configs(DefaultConfigs):
         # if <1, false positive predictions in foreground are penalized less.
         self.fp_dice_weight = 1 if self.dim == 2 else 1
 
-        self.wce_weights = [1, 1, 1]
+        self.wce_weights = [0.3, 1, 1]
         self.detection_min_confidence = self.min_det_thresh
 
         # if 'True', loss distinguishes all classes, else only foreground vs. background (class agnostic).
@@ -230,7 +231,7 @@ class configs(DefaultConfigs):
     def add_mrcnn_configs(self):
 
         # learning rate is a list with one entry per epoch.
-        self.learning_rate = [1e-4] * self.num_epochs
+        self.learning_rate = [3e-4] * self.num_epochs
 
         # disable mask head loss. (e.g. if no pixelwise annotations available)
         self.frcnn_mode = False
@@ -271,7 +272,7 @@ class configs(DefaultConfigs):
         self.rpn_nms_threshold = 0.7 if self.dim == 2 else 0.7
 
         # loss sampling settings.
-        self.rpn_train_anchors_per_image = 2  #per batch element
+        self.rpn_train_anchors_per_image = 64 #per batch element
         self.train_rois_per_image = 2 #per batch element
         self.roi_positive_ratio = 0.5
         self.anchor_matching_iou = 0.7
@@ -327,7 +328,7 @@ class configs(DefaultConfigs):
             self.num_seg_classes = 3 if self.class_specific_seg_flag else 2
             self.frcnn_mode = True
 
-        if self.model == 'retina_net' or self.model == 'retina_unet' or self.model == 'prob_detector':
+        if self.model == 'retina_net' or self.model == 'retina_unet':
             # implement extra anchor-scales according to retina-net publication.
             self.rpn_anchor_scales['xy'] = [[ii[0], ii[0] * (2 ** (1 / 3)), ii[0] * (2 ** (2 / 3))] for ii in
                                             self.rpn_anchor_scales['xy']]

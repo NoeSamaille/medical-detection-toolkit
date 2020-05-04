@@ -21,7 +21,11 @@ from scipy.stats import norm
 from collections import OrderedDict
 from multiprocessing import Pool
 import pickle
+from copy import deepcopy
 import pandas as pd
+
+import utils.exp_utils as utils
+from plotting import plot_batch_prediction
 
 
 class Predictor:
@@ -76,6 +80,9 @@ class Predictor:
             if self.cf.test_aug:
                 self.n_ens *= 4
 
+            self.example_plot_dir = os.path.join(cf.test_dir, "example_plots")
+            os.makedirs(self.example_plot_dir, exist_ok=True)
+
 
     def predict_patient(self, batch):
         """
@@ -93,10 +100,11 @@ class Predictor:
                  - 'seg_preds': pixel-wise predictions. (b, 1, y, x, (z))
                  - losses (only in validation mode)
         """
-        self.logger.info('evaluating patient {} for fold {} '.format(batch['pid'], self.cf.fold))
+        #self.logger.info('\revaluating patient {} for fold {} '.format(batch['pid'], self.cf.fold))
+        print('\revaluating patient {} for fold {} '.format(batch['pid'], self.cf.fold), end="", flush=True)
 
         # True if patient is provided in patches and predictions need to be tiled.
-        self.patched_patient = True if 'patch_crop_coords' in list(batch.keys()) else False
+        self.patched_patient = 'patch_crop_coords' in batch.keys()
 
         # forward batch through prediction pipeline.
         results_dict = self.data_aug_forward(batch)
@@ -136,6 +144,7 @@ class Predictor:
         # get paths of all parameter sets to be loaded for temporal ensembling. (or just one for no temp. ensembling).
         weight_paths = [os.path.join(self.cf.fold_dir, '{}_best_checkpoint'.format(epoch), 'params.pth') for epoch in
                         self.epoch_ranking]
+        n_test_plots = min(batch_gen['n_test'], 1)
 
         for rank_ix, weight_path in enumerate(weight_paths):
 
@@ -143,23 +152,45 @@ class Predictor:
             self.net.load_state_dict(torch.load(weight_path))
             self.net.eval()
             self.rank_ix = str(rank_ix)  # get string of current rank for unique patch ids.
+            plot_batches = np.random.choice(np.arange(batch_gen['n_test']), size=n_test_plots, replace=False)
 
             with torch.no_grad():
-                for _ in range(batch_gen['n_test']):
+                for i in range(batch_gen['n_test']):
 
                     batch = next(batch_gen['test'])
 
                     # store batch info in patient entry of results dict.
                     if rank_ix == 0:
                         dict_of_patient_results[batch['pid']] = {}
-                        dict_of_patient_results[batch['pid']]['results_list'] = []
+                        dict_of_patient_results[batch['pid']]['results_dicts'] = []
                         dict_of_patient_results[batch['pid']]['patient_bb_target'] = batch['patient_bb_target']
                         dict_of_patient_results[batch['pid']]['patient_roi_labels'] = batch['patient_roi_labels']
 
                     # call prediction pipeline and store results in dict.
                     results_dict = self.predict_patient(batch)
-                    dict_of_patient_results[batch['pid']]['results_list'].append({"boxes": results_dict['boxes']})
+                    dict_of_patient_results[batch['pid']]['results_dicts'].append({"boxes": results_dict['boxes']})
 
+                    if i in plot_batches and not self.patched_patient:
+                        # view qualitative results of random test case
+                        # plotting for patched patients is too expensive, thus not done. Change at will.
+                        try:
+                            out_file = os.path.join(self.example_plot_dir,
+                                                    'batch_example_test_{}_rank_{}.png'.format(self.cf.fold,
+                                                                                               rank_ix))
+                            results_for_plotting = deepcopy(results_dict)
+                            # seg preds of test augs are included separately. for viewing, only show aug 0 (merging
+                            # would need multiple changes, incl in every model).
+                            if results_for_plotting["seg_preds"].shape[1] > 1:
+                                results_for_plotting["seg_preds"] = results_dict['seg_preds'][:, [0]]
+                            for bix in range(batch["seg"].shape[0]): # batch dim should be 1
+                                for tix in range(len(batch['bb_target'][bix])):
+                                    results_for_plotting['boxes'][bix].append({'box_coords': batch['bb_target'][bix][tix],
+                                                                       'box_label': batch['class_target'][bix][tix],
+                                                                       'box_type': 'gt'})
+                            utils.split_off_process(plot_batch_prediction, batch, results_for_plotting, self.cf,
+                                                    outfile=out_file, suptitle="Test plot:\nunmerged TTA overlayed.")
+                        except Exception as e:
+                            self.logger.info("WARNING: error in plotting example test batch: {}".format(e))
 
 
         self.logger.info('finished predicting test set. starting post-processing of predictions.')
@@ -169,10 +200,10 @@ class Predictor:
         # if provided, add ground truth boxes for evaluation.
         for pid, p_dict in dict_of_patient_results.items():
 
-            tmp_ens_list = p_dict['results_list']
+            tmp_ens_list = p_dict['results_dicts']
             results_dict = {}
             # collect all boxes/seg_preds of same batch_instance over temporal instances.
-            b_size = len(tmp_ens_list[0])
+            b_size = len(tmp_ens_list[0]["boxes"])
             results_dict['boxes'] = [[item for rank_dict in tmp_ens_list for item in rank_dict["boxes"][batch_instance]]
                                      for batch_instance in range(b_size)]
 
@@ -187,7 +218,6 @@ class Predictor:
                     results_dict['boxes'][b].append({'box_coords': p_dict['patient_bb_target'][b][t],
                                                      'box_label': p_dict['patient_roi_labels'][b][t],
                                                      'box_type': 'gt'})
-
             results_per_patient.append([results_dict, pid])
 
         # save out raw predictions.
@@ -235,8 +265,9 @@ class Predictor:
         """
 
         # load predictions for a single test-set fold.
-        if not self.cf.hold_out_test_set:
-            with open(os.path.join(self.cf.fold_dir, 'raw_pred_boxes_list.pickle'), 'rb') as handle:
+        results_file = 'raw_pred_boxes_hold_out_list.pickle' if self.cf.hold_out_test_set else 'raw_pred_boxes_list.pickle'
+        if not self.cf.hold_out_test_set or not self.cf.ensemble_folds:
+            with open(os.path.join(self.cf.fold_dir, results_file), 'rb') as handle:
                 results_list = pickle.load(handle)
             box_results_list = [(res_dict["boxes"], pid) for res_dict, pid in results_list]
             da_factor = 4 if self.cf.test_aug else 1
@@ -247,7 +278,7 @@ class Predictor:
         # if hold out test set was perdicted, aggregate predictions of all trained models
         # corresponding to all CV-folds and flatten them.
         else:
-            self.logger.info("loading saved predictions of hold-out test set")
+            self.logger.info("loading saved predictions of hold-out test set and ensembling over folds.")
             fold_dirs = sorted([os.path.join(self.cf.exp_dir, f) for f in os.listdir(self.cf.exp_dir) if
                                 os.path.isdir(os.path.join(self.cf.exp_dir, f)) and f.startswith("fold")])
 
@@ -256,7 +287,7 @@ class Predictor:
             for fold in range(self.cf.n_cv_splits):
                 fold_dir = os.path.join(self.cf.exp_dir, 'fold_{}'.format(fold))
                 if fold_dir in fold_dirs:
-                    with open(os.path.join(fold_dir, 'raw_pred_boxes_hold_out_list.pickle'), 'rb') as handle:
+                    with open(os.path.join(fold_dir, results_file), 'rb') as handle:
                         fold_list = pickle.load(handle)
                         results_list += fold_list
                         folds_loaded += 1
@@ -496,7 +527,7 @@ class Predictor:
                  - 'seg_preds': pixel-wise predictions. (b, 1, y, x, (z))
                  - losses (only in validation mode)
         """
-        self.logger.info('forwarding (patched) patient with shape: {}'.format(batch['data'].shape))
+        #self.logger.info('forwarding (patched) patient with shape: {}'.format(batch['data'].shape))
 
         img = batch['data']
 
@@ -618,10 +649,13 @@ def merge_2D_to_3D_preds_per_patient(inputs):
             out_patient_results_list.append({'box_type': 'det', 'box_coords': list(box_coords[kix]) + kz,
                                              'box_score': box_scores[kix], 'box_pred_class_id': cl})
 
-    out_patient_results_list += [box for b in in_patient_results_list for box in b if box['box_type'] == 'gt']
-    out_patient_results_list = [out_patient_results_list] # add dummy batch dimension 1 for 3D.
+    gt_boxes = [box for b in in_patient_results_list for box in b if box['box_type'] == 'gt']
+    if len(gt_boxes) > 0:
+        assert np.all([len(box["box_coords"]) == 6 for box in gt_boxes]), "expanded preds to 3D but GT is 2D."
+    out_patient_results_list += gt_boxes
 
-    return [out_patient_results_list, pid]
+    # add dummy batch dimension 1 for 3D.
+    return [[out_patient_results_list], pid]
 
 
 

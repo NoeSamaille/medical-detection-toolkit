@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
+from typing import Union
 
 import matplotlib
 matplotlib.use('Agg')
@@ -23,7 +24,21 @@ import os
 from copy import deepcopy
 
 
-def plot_batch_prediction(batch, results_dict, cf, outfile= None):
+def suppress_axes_lines(ax):
+    """
+    :param ax: pyplot axes object
+    """
+    ax.axes.get_xaxis().set_ticks([])
+    ax.axes.get_yaxis().set_ticks([])
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+
+    return
+
+def plot_batch_prediction(batch: dict, results_dict: dict, cf, outfile: Union[str, None]=None,
+                          suptitle: Union[str, None]=None):
     """
     plot the input images, ground truth annotations, and output predictions of a batch. If 3D batch, plots a 2D projection
     of one randomly sampled element (patient) in the batch. Since plotting all slices of patient volume blows up costs of
@@ -92,11 +107,13 @@ def plot_batch_prediction(batch, results_dict, cf, outfile= None):
         for m in range(show_arrays.shape[1]):
 
             ax = plt.subplot(gs[m, b])
-            ax.axis('off')
+            suppress_axes_lines(ax)
             if m < show_arrays.shape[1]:
                 arr = show_arrays[b, m]
 
             if m < data.shape[1] or m == show_arrays.shape[1] - 1:
+                if b == 0:
+                    ax.set_ylabel("Input" + (" + GT & Pred Box" if m == show_arrays.shape[1] - 1 else ""))
                 cmap = 'gray'
                 vmin = None
                 vmax = None
@@ -110,6 +127,11 @@ def plot_batch_prediction(batch, results_dict, cf, outfile= None):
 
             plt.imshow(arr, cmap=cmap, vmin=vmin, vmax=vmax)
             if m >= (data.shape[1]):
+                if b == 0:
+                    if m == data.shape[1]:
+                        ax.set_ylabel("GT Box & Seg")
+                    if m == data.shape[1]+1:
+                        ax.set_ylabel("GT Box + Pred Seg & Box")
                 for box in roi_results[b]:
                     if box['box_type'] != 'patient_tn_box': # don't plot true negative dummy boxes.
                         coords = box['box_coords']
@@ -150,6 +172,9 @@ def plot_batch_prediction(batch, results_dict, cf, outfile= None):
                         plt.plot([coords[3], coords[3]], [coords[0], coords[2]], color=color, linewidth=1, alpha=1) # right
                         if plot_text:
                             plt.text(text_x, text_y, score_text, fontsize=score_font_size, color=text_color)
+
+    if suptitle is not None:
+        plt.suptitle(suptitle, fontsize=22)
 
     try:
         plt.savefig(outfile)
@@ -224,7 +249,7 @@ def detection_monitoring_plot(ax1, metrics, exp_name, color_palette, epoch, figu
         ax1.set_title(exp_name)
 
 
-def plot_prediction_hist(label_list, pred_list, type_list, outfile):
+def plot_prediction_hist(label_list: list, pred_list: list, type_list: list, outfile: str):
     """
     plot histogram of predictions for a specific class.
     :param label_list: list of 1s and 0s specifying whether prediction is a true positive match (1) or a false positive (0).
@@ -257,12 +282,12 @@ def plot_prediction_hist(label_list, pred_list, type_list, outfile):
     plt.close()
 
 
-def plot_stat_curves(stats, outfile):
+def plot_stat_curves(stats: list, outfile: str):
 
     for c in ['roc', 'prc']:
         plt.figure()
         for s in stats:
-            if s[c] is not None:
+            if not (isinstance(s[c], float) and np.isnan(s[c])):
                 plt.plot(s[c][0], s[c][1], label=s['name'] + '_' + c)
         plt.title(outfile.split('/')[-1] + '_' + c)
         plt.legend(loc=3 if c == 'prc' else 4)

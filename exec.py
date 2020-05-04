@@ -44,7 +44,18 @@ def train(logger):
         cf.dim, cf.fold, cf.exp_dir, cf.model))
 
     net = model.net(cf, logger).cuda()
-    optimizer = torch.optim.Adam(net.parameters(), lr=cf.learning_rate[0], weight_decay=cf.weight_decay)
+    if hasattr(cf, "optimizer") and cf.optimizer.lower() == "adam":
+        logger.info("Using Adam optimizer.")
+        optimizer = torch.optim.Adam(utils.parse_params_for_optim(net, weight_decay=cf.weight_decay,
+                                                                   exclude_from_wd=cf.exclude_from_wd),
+                                      lr=cf.learning_rate[0])
+    else:
+        logger.info("Using AdamW optimizer.")
+        optimizer = torch.optim.AdamW(utils.parse_params_for_optim(net, weight_decay=cf.weight_decay,
+                                                                   exclude_from_wd=cf.exclude_from_wd),
+                                      lr=cf.learning_rate[0])
+
+
     if cf.dynamic_lr_scheduling:
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode=cf.scheduling_mode, factor=cf.lr_decay_factor,
                                                                patience=cf.scheduling_patience)
@@ -58,9 +69,12 @@ def train(logger):
     # prepare monitoring
     monitor_metrics = utils.prepare_monitoring(cf)
 
-    if cf.resume_to_checkpoint:
-        starting_epoch, monitor_metrics = utils.load_checkpoint(cf.resume_to_checkpoint, net, optimizer)
-        logger.info('resumed to checkpoint {} at epoch {}'.format(cf.resume_to_checkpoint, starting_epoch))
+    if cf.resume:
+        checkpoint_path = os.path.join(cf.fold_dir, "last_checkpoint")
+        starting_epoch, net, optimizer, monitor_metrics = \
+            utils.load_checkpoint(checkpoint_path, net, optimizer)
+        logger.info('resumed from checkpoint {} to epoch {}'.format(checkpoint_path, starting_epoch))
+
 
     logger.info('loading dataset and initializing batch generators...')
     batch_gen = data_loader.get_train_generators(cf, logger)
@@ -72,7 +86,6 @@ def train(logger):
 
         net.train()
         train_results_list = []
-
         for bix in range(cf.num_train_batches):
             batch = next(batch_gen['train'])
             tic_fw = time.time()
@@ -81,13 +94,17 @@ def train(logger):
             optimizer.zero_grad()
             results_dict['torch_loss'].backward()
             optimizer.step()
-            logger.info('tr. batch {0}/{1} (ep. {2}) fw {3:.2f}s / bw {4:.2f} s / total {5:.2f} s || '
-                        .format(bix + 1, cf.num_train_batches, epoch, tic_bw - tic_fw,
-                                time.time() - tic_bw, time.time() - tic_fw) + results_dict['logger_string'])
-            #train_results_list.append([results_dict['boxes'], batch['pid']])
+            print('\rtr. batch {0}/{1} (ep. {2}) fw {3:.2f}s / bw {4:.2f} s / total {5:.2f} s || '.format(
+                bix + 1, cf.num_train_batches, epoch, tic_bw - tic_fw, time.time() - tic_bw,
+                time.time() - tic_fw) + results_dict['logger_string'], flush=True, end="")
             train_results_list.append(({k:v for k,v in results_dict.items() if k != "seg_preds"}, batch["pid"]))
+        print()
 
         _, monitor_metrics['train'] = train_evaluator.evaluate_predictions(train_results_list, monitor_metrics['train'])
+
+        logger.info('generating training example plot.')
+        utils.split_off_process(plot_batch_prediction, batch, results_dict, cf, outfile=os.path.join(
+           cf.plot_dir, 'pred_example_{}_train.png'.format(cf.fold)))
 
         train_time = time.time() - start_time
 
@@ -115,12 +132,14 @@ def train(logger):
             logger.metrics2tboard(monitor_metrics, global_step=epoch)
 
             epoch_time = time.time() - start_time
-            logger.info('trained epoch {}: took {:.2f} s ({:.2f} s train / {:.2f} s val)'.format(
-                epoch, epoch_time, train_time, epoch_time-train_time))
+            logger.info('trained epoch {}: took {} ({} train / {} val)'.format(
+                epoch, utils.get_formatted_duration(epoch_time, "ms"), utils.get_formatted_duration(train_time, "ms"),
+                utils.get_formatted_duration(epoch_time-train_time, "ms")))
             batch = next(batch_gen['val_sampling'])
             results_dict = net.train_forward(batch, is_validation=True)
-            logger.info('plotting predictions from validation sampling.')
-            plot_batch_prediction(batch, results_dict, cf)
+            logger.info('generating validation-sampling example plot.')
+            utils.split_off_process(plot_batch_prediction, batch, results_dict, cf, outfile=os.path.join(
+                cf.plot_dir, 'pred_example_{}_val.png'.format(cf.fold)))
 
         # -------------- scheduling -----------------
         if cf.dynamic_lr_scheduling:
@@ -160,52 +179,59 @@ if __name__ == '__main__':
                         help='load configs from existing exp_dir instead of source dir. always done for testing, '
                              'but can be set to true to do the same for training. useful in job scheduler environment, '
                              'where source code might change before the job actually runs.')
-    parser.add_argument('--resume_to_checkpoint', type=str, default=None,
-                        help='if resuming to checkpoint, the desired fold still needs to be parsed via --folds.')
+    parser.add_argument('--resume', action="store_true", default=False,
+                        help='if given, resume from checkpoint(s) of the specified folds.')
     parser.add_argument('--exp_source', type=str, default='experiments/toy_exp',
                         help='specifies, from which source experiment to load configs and data_loader.')
+    parser.add_argument('--no_benchmark', action='store_true', help="Do not use cudnn.benchmark.")
+    parser.add_argument('--cuda_device', type=int, default=0, help="Index of CUDA device to use.")
     parser.add_argument('-d', '--dev', default=False, action='store_true', help="development mode: shorten everything")
 
     args = parser.parse_args()
     folds = args.folds
-    resume_to_checkpoint = args.resume_to_checkpoint
+
+    torch.backends.cudnn.benchmark = not args.no_benchmark
 
     if args.mode == 'train' or args.mode == 'train_test':
 
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, args.use_stored_settings)
         if args.dev:
             folds = [0,1]
-            cf.batch_size, cf.num_epochs, cf.min_save_thresh, cf.save_n_models = 3 if cf.dim==2 else 1, 1, 0, 1
+            cf.batch_size, cf.num_epochs, cf.min_save_thresh, cf.save_n_models = 3 if cf.dim==2 else 1, 1, 0, 2
             cf.num_train_batches, cf.num_val_batches, cf.max_val_patients = 5, 1, 1
             cf.test_n_epochs =  cf.save_n_models
-            cf.max_test_patients = 1
+            cf.max_test_patients = 2
 
         cf.data_dest = args.data_dest
         logger = utils.get_logger(cf.exp_dir, cf.server_env)
+        logger.info("cudnn benchmark: {}, deterministic: {}.".format(torch.backends.cudnn.benchmark,
+                                                                     torch.backends.cudnn.deterministic))
+        logger.info("sending tensors to CUDA device: {}.".format(torch.cuda.get_device_name(args.cuda_device)))
         data_loader = utils.import_module('dl', os.path.join(args.exp_source, 'data_loader.py'))
         model = utils.import_module('model', cf.model_path)
         logger.info("loaded model from {}".format(cf.model_path))
         if folds is None:
             folds = range(cf.n_cv_splits)
 
-        for fold in folds:
-            cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
-            cf.fold = fold
-            cf.resume_to_checkpoint = resume_to_checkpoint
-            if not os.path.exists(cf.fold_dir):
-                os.mkdir(cf.fold_dir)
-            logger.set_logfile(fold=fold)
-            train(logger)
-            cf.resume_to_checkpoint = None
-            if args.mode == 'train_test':
-                test(logger)
+        with torch.cuda.device(args.cuda_device):
+            for fold in folds:
+                cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
+                cf.fold = fold
+                cf.resume = args.resume
+                if not os.path.exists(cf.fold_dir):
+                    os.mkdir(cf.fold_dir)
+                logger.set_logfile(fold=fold)
+                train(logger)
+                cf.resume = False
+                if args.mode == 'train_test':
+                    test(logger)
 
     elif args.mode == 'test':
 
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
         if args.dev:
             folds = [0,1]
-            cf.test_n_epochs =  1; cf.max_test_patients = 1
+            cf.test_n_epochs = 2; cf.max_test_patients = 2
 
         cf.data_dest = args.data_dest
         logger = utils.get_logger(cf.exp_dir, cf.server_env)
@@ -215,36 +241,50 @@ if __name__ == '__main__':
         if folds is None:
             folds = range(cf.n_cv_splits)
 
-        for fold in folds:
-            cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
-            cf.fold = fold
-            logger.set_logfile(fold=fold)
-            test(logger)
+        with torch.cuda.device(args.cuda_device):
+            for fold in folds:
+                cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
+                cf.fold = fold
+                logger.set_logfile(fold=fold)
+                test(logger)
 
     # load raw predictions saved by predictor during testing, run aggregation algorithms and evaluation.
     elif args.mode == 'analysis':
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
         logger = utils.get_logger(cf.exp_dir, cf.server_env)
 
-        if cf.hold_out_test_set:
-            cf.folds = args.folds
+        if args.dev:
+            cf.test_n_epochs = 2
+
+        if cf.hold_out_test_set and cf.ensemble_folds:
+            # create and save (unevaluated) predictions across all folds
             predictor = Predictor(cf, net=None, logger=logger, mode='analysis')
             results_list = predictor.load_saved_predictions(apply_wbc=True)
             utils.create_csv_output([(res_dict["boxes"], pid) for res_dict, pid in results_list], cf, logger)
+            logger.info('starting evaluation...')
+            cf.fold = 'overall_hold_out'
+            evaluator = Evaluator(cf, logger, mode='test')
+            evaluator.evaluate_predictions(results_list)
+            evaluator.score_test_df()
 
         else:
+            fold_dirs = sorted([os.path.join(cf.exp_dir, f) for f in os.listdir(cf.exp_dir) if
+                         os.path.isdir(os.path.join(cf.exp_dir, f)) and f.startswith("fold")])
             if folds is None:
                 folds = range(cf.n_cv_splits)
             for fold in folds:
                 cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
                 cf.fold = fold
                 logger.set_logfile(fold=fold)
-                predictor = Predictor(cf, net=None, logger=logger, mode='analysis')
-                results_list = predictor.load_saved_predictions(apply_wbc=True)
-                logger.info('starting evaluation...')
-                evaluator = Evaluator(cf, logger, mode='test')
-                evaluator.evaluate_predictions(results_list)
-                evaluator.score_test_df()
+                if cf.fold_dir in fold_dirs:
+                    predictor = Predictor(cf, net=None, logger=logger, mode='analysis')
+                    results_list = predictor.load_saved_predictions(apply_wbc=True)
+                    logger.info('starting evaluation...')
+                    evaluator = Evaluator(cf, logger, mode='test')
+                    evaluator.evaluate_predictions(results_list)
+                    evaluator.score_test_df()
+                else:
+                    logger.info("Skipping fold {} since no model parameters found.".format(fold))
 
     # create experiment folder and copy scripts without starting job.
     # useful for cloud deployment where configs might change before job actually runs.
@@ -256,8 +296,7 @@ if __name__ == '__main__':
     else:
         raise RuntimeError('mode specified in args is not implemented...')
 
-    mins, secs = divmod((time.time() - stime), 60)
-    h, mins = divmod(mins, 60)
-    t = "{:d}h:{:02d}m:{:02d}s".format(int(h), int(mins), int(secs))
+
+    t = utils.get_formatted_duration(time.time() - stime)
     logger.info("{} total runtime: {}".format(os.path.split(__file__)[1], t))
     del logger

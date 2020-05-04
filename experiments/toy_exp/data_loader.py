@@ -45,8 +45,11 @@ def get_train_generators(cf, logger):
     all_data = load_dataset(cf, logger)
     all_pids_list = np.unique([v['pid'] for (k, v) in all_data.items()])
 
-    train_pids = all_pids_list[:cf.n_train_data]
-    val_pids = all_pids_list[1000:1500]
+    assert cf.n_train_val_data <= len(all_pids_list), \
+        "requested {} train val samples, but dataset only has {} train val samples.".format(
+            cf.n_train_val_data, len(all_pids_list))
+    train_pids = all_pids_list[:int(2*cf.n_train_val_data//3)]
+    val_pids = all_pids_list[int(np.ceil(2*cf.n_train_val_data//3)):cf.n_train_val_data]
 
     train_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in train_pids)}
     val_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in val_pids)}
@@ -188,7 +191,7 @@ class BatchGenerator(SlimDataLoaderBase):
     Actual patch_size is obtained after data augmentation.
     :param data: data dictionary as provided by 'load_dataset'.
     :param batch_size: number of patients to sample for the batch
-    :return dictionary containing the batch data (b, c, x, y, (z)) / seg (b, 1, x, y, (z)) / pids / class_target
+    :return dictionary containing the batch data (b, c, y, x, (z)) / seg (b, 1, y, x, (z)) / pids / class_target
     """
     def __init__(self, data, batch_size, cf):
         super(BatchGenerator, self).__init__(data, batch_size)
@@ -253,13 +256,13 @@ class PatientBatchIterator(SlimDataLoaderBase):
         out_data = data[None, None]
         out_seg = seg[None, None]
 
-        print('check patient data loader', out_data.shape, out_seg.shape)
+        #print('check patient data loader', out_data.shape, out_seg.shape)
         batch_2D = {'data': out_data, 'seg': out_seg, 'class_target': batch_class_targets, 'pid': pid}
         converter = ConvertSegToBoundingBoxCoordinates(dim=2, get_rois_from_seg_flag=False, class_specific_seg_flag=self.cf.class_specific_seg_flag)
         batch_2D = converter(**batch_2D)
 
         batch_2D.update({'patient_bb_target': batch_2D['bb_target'],
-                         'patient_roi_labels': batch_2D['roi_labels'],
+                         'patient_roi_labels': batch_2D['class_target'],
                          'original_img_shape': out_data.shape})
 
         self.patient_ix += 1
@@ -280,7 +283,7 @@ def copy_and_unpack_data(logger, pids, fold_dir, source_dir, target_dir):
         source_dir, target_dir), shell=True)
     # dutils.unpack_dataset(target_dir)
     copied_files = os.listdir(target_dir)
-    logger.info("copying and unpacking data set finished : {} files in target dir: {}. took {} sec".format(
+    logger.info("copying data set finished : {} files in target dir: {}. took {} sec".format(
         len(copied_files), target_dir, np.round(time.time() - start_time, 0)))
 
 if __name__=="__main__":

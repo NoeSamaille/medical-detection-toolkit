@@ -3,6 +3,23 @@
 
 Copyright © German Cancer Research Center (DKFZ), <a href="https://www.dkfz.de/en/mic/index.php">Division of Medical Image Computing (MIC)</a>. Please make sure that your usage of this code is in compliance with the code <a href="https://github.com/pfjaeger/medicaldetectiontoolkit/blob/master/LICENSE">license</a>.  
 
+## Release Notes
+**v0.1.0**: 
+- Updates to python 3.7, torch 1.4.0, torchvision 0.5.0, entailing a change in custom extensions NMS and RoIAlign 
+        (now in C++ and CUDA).
+- Scalar monitoring is changed to torch-included tensorboard. 
+- Added qualitative example plots for validation and testing. 
+- Default optimizer is changed to AdamW instead of Adam to account for fix in weight-decay handling, 
+norms and biases can optionally be excluded from weight decay. 
+- Introduced optional dynamic learning-rate scheduling. 
+- A specific CUDA device can now be selected via script argument.
+- Inside the models, GT class labels identification is changed from `'roi_labels'` to `'class_target'` to streamline naming scheme.
+- Added dataset [tutorial](experiments/tutorial.md).
+
+**v0.0.2**: Small fixes mainly regarding server-env settings (cluster deployment).\
+**v0.0.1**: Original framework as used for the corresponding paper, with Python 3.6 and torch 0.4.1 dependencies, 
+        custom extensions NMS and RoIAlign in C and CUDA, scalar monitoring via plot files.
+        
 ## Overview
 This is a comprehensive framework for object detection featuring:
 - 2D + 3D implementations of prevalent object detectors: e.g. Mask R-CNN [1], Retina Net [2], Retina U-Net [3]. 
@@ -23,6 +40,8 @@ of Segmentation Supervision for Medical Object Detection" </a>, 2018
 
 [5] https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocotools/cocoeval.py<br/>
 [6] https://github.com/MIC-DKFZ/batchgenerators<br/><br>
+
+A tutorial on how to add your own data set can be found under [`experiments/tutorial.md`](experiments/tutorial.md).
 
 ## How to cite this code
 Please cite the original publication [3].
@@ -80,19 +99,17 @@ virtualenv -p python3.7 mdt
 source mdt/bin/activate
 python setup.py install
 ```
+##### Custom Extensions
 This framework uses two custom mixed C++/CUDA extensions: Non-maximum suppression (NMS) and RoIAlign. Both are adapted from the original pytorch extensions (under torchvision.ops.boxes and ops.roialign).
-The extensions are automatically compiled from the provided source files under RegRCNN/custom_extensions with above setup.py. 
-Your system is required to have a compatible CUDA compiler (nvcc).
+The extensions are automatically compiled from the provided source files under medicaldetectiontoolkit/custom_extensions with above setup.py. 
+However, the extensions need to be compiled specifically for certain GPU architectures. Hence, please ensure that the architectures you need are included in your shell's
+environment variable ```TORCH_CUDA_ARCH_LIST``` before compilation. 
+
+Example: You want to use the modules with the new TITAN RTX GPU, which has 
+Compute Capability 7.5 (Turing Architecture), but sometimes you also want to use it with a TITAN Xp (6.1, Pascal). Before installation you need to
+```export TORCH_CUDA_ARCH_LIST="6.1;7.5"```. A link list of GPU model names to Compute Capability can be found here: https://developer.nvidia.com/cuda-gpus. 
 Note: If you'd like to import the raw extensions (not the wrapper modules), be sure to import torch first.
 
-Please note, if you attempt to install the framework via pip, you need to:
-1. instead of executing above line `python setup.py install` execute `pip install .`,
-2. manually install the custom extensions. This can be done from source by
-    ```
-    pip install ./custom_extensions/nms
-    pip install ./custom_extensions/roi_align/2D
-    pip install ./custom_extensions/roi_align/3D
-    ```
 
 ## Prepare the Data
 This framework is meant for you to be able to train models on your own data sets. 
