@@ -28,6 +28,10 @@ import utils.exp_utils as utils
 from plotting import plot_batch_prediction
 
 
+def box_score_50_percent(box):
+    return float(box['box_score']) > 0.5
+
+
 class Predictor:
     """
     Prediction pipeline:
@@ -100,8 +104,7 @@ class Predictor:
                  - 'seg_preds': pixel-wise predictions. (b, 1, y, x, (z))
                  - losses (only in validation mode)
         """
-        #self.logger.info('\revaluating patient {} for fold {} '.format(batch['pid'], self.cf.fold))
-        print('\revaluating patient {} for fold {} '.format(batch['pid'], self.cf.fold), end="", flush=True)
+        self.logger.info(f'forwarding patient {batch["pid"]} for fold {self.cf.fold}')
 
         # True if patient is provided in patches and predictions need to be tiled.
         self.patched_patient = 'patch_crop_coords' in batch.keys()
@@ -123,6 +126,9 @@ class Predictor:
             if self.cf.merge_2D_to_3D_preds:
                 merge_dims_inputs = [results_dict['boxes'], 'dummy_pid', self.cf.class_dict, self.cf.merge_3D_iou]
                 results_dict['boxes'] = merge_2D_to_3D_preds_per_patient(merge_dims_inputs)[0]
+
+        # Keep only bboxes with score >= 50%
+        results_dict['boxes'][0] = list(filter(box_score_50_percent, results_dict['boxes'][0]))
 
         return results_dict
 

@@ -110,8 +110,20 @@ def get_test_generator(cf, logger):
     return batch_gen
 
 
+def get_pred_generator(cf, logger):
+    """
+    wrapper function for creating the prediction batch generator pipeline.
+    """
+    test_data = load_dataset(cf, logger, patient_path=cf.patient_path)
+    logger.info(f"data set loaded with: {cf.patient_path}")
+    batch_gen = {}
+    batch_gen['pred'] = PatientBatchIterator(test_data, cf=cf)
+    batch_gen['n_test'] = 1
+    return batch_gen
 
-def load_dataset(cf, logger, subset_ixs=None, pp_data_path=None, pp_name=None):
+
+
+def load_dataset(cf, logger, subset_ixs=None, pp_data_path=None, pp_name=None, patient_path=None):
     """
     loads the dataset. if deployed in cloud also copies and unpacks the data to the working directory.
     :param subset_ixs: subset indices to be loaded from the dataset. used e.g. for testing to only load the test folds.
@@ -119,53 +131,64 @@ def load_dataset(cf, logger, subset_ixs=None, pp_data_path=None, pp_name=None):
     individual images for training) each entry is a dictionary containing respective meta-info as well as paths to the preprocessed
     numpy arrays to be loaded during batch-generation
     """
-    if pp_data_path is None:
-        pp_data_path = cf.pp_data_path
-    if pp_name is None:
-        pp_name = cf.pp_name
-    if cf.server_env:
-        copy_data = True
-        target_dir = os.path.join(cf.data_dest, pp_name)
-        if not os.path.exists(target_dir):
-            cf.data_source_dir = pp_data_path
-            os.makedirs(target_dir)
-            subprocess.call('rsync -av {} {}'.format(
-                os.path.join(cf.data_source_dir, cf.input_df_name), os.path.join(target_dir, cf.input_df_name)), shell=True)
-            logger.info('created target dir and info df at {}'.format(os.path.join(target_dir, cf.input_df_name)))
-
-        elif subset_ixs is None:
-            copy_data = False
-
-        pp_data_path = target_dir
-
-
-    p_df = pd.read_pickle(os.path.join(pp_data_path, cf.input_df_name))
-
-    if cf.select_prototype_subset is not None:
-        prototype_pids = p_df.pid.tolist()[:cf.select_prototype_subset]
-        p_df = p_df[p_df.pid.isin(prototype_pids)]
-        logger.warning('WARNING: using prototyping data subset!!!')
-
-    if subset_ixs is not None:
-        subset_pids = [np.unique(p_df.pid.tolist())[ix] for ix in subset_ixs]
-        p_df = p_df[p_df.pid.isin(subset_pids)]
-        logger.info('subset: selected {} instances from df'.format(len(p_df)))
-
-    if cf.server_env:
-        if copy_data:
-            copy_and_unpack_data(logger, p_df.pid.tolist(), cf.fold_dir, cf.data_source_dir, target_dir)
-
-    class_targets = p_df['class_target'].tolist()
-    pids = p_df.pid.tolist()
-    imgs = [os.path.join(pp_data_path, '{}_img.npy'.format(pid)) for pid in pids]
-    segs = [os.path.join(pp_data_path,'{}_rois.npy'.format(pid)) for pid in pids]
-
     data = OrderedDict()
-    for ix, pid in enumerate(pids):
-        # for the experiment conducted here, malignancy scores are binarized: (benign: 1-2, malignant: 3-5)
-        targets = [1 if ii >= 3 else 0 for ii in class_targets[ix]]
-        data[pid] = {'data': imgs[ix], 'seg': segs[ix], 'pid': pid, 'class_target': targets}
-        data[pid]['fg_slices'] = p_df['fg_slices'].tolist()[ix]
+    if patient_path is not None:
+        # Load data of specific patient (e.g. for prediction)
+        filename=patient_path
+        pid=os.path.splitext(os.path.basename(filename))[0]
+        filenameNifty=filename.replace('.npy', '_nifti.npy')
+        if os.path.exists(filenameNifty):
+            seg = filenameNifty
+        else:
+            seg = None
+        data[pid] = {'data': filename, 'seg': seg, 'pid': pid, 'class_target': []}
+    else:
+        if pp_data_path is None:
+            pp_data_path = cf.pp_data_path
+        if pp_name is None:
+            pp_name = cf.pp_name
+        if cf.server_env:
+            copy_data = True
+            target_dir = os.path.join(cf.data_dest, pp_name)
+            if not os.path.exists(target_dir):
+                cf.data_source_dir = pp_data_path
+                os.makedirs(target_dir)
+                subprocess.call('rsync -av {} {}'.format(
+                    os.path.join(cf.data_source_dir, cf.input_df_name), os.path.join(target_dir, cf.input_df_name)), shell=True)
+                logger.info('created target dir and info df at {}'.format(os.path.join(target_dir, cf.input_df_name)))
+
+            elif subset_ixs is None:
+                copy_data = False
+
+            pp_data_path = target_dir
+
+
+        p_df = pd.read_pickle(os.path.join(pp_data_path, cf.input_df_name))
+
+        if cf.select_prototype_subset is not None:
+            prototype_pids = p_df.pid.tolist()[:cf.select_prototype_subset]
+            p_df = p_df[p_df.pid.isin(prototype_pids)]
+            logger.warning('WARNING: using prototyping data subset!!!')
+
+        if subset_ixs is not None:
+            subset_pids = [np.unique(p_df.pid.tolist())[ix] for ix in subset_ixs]
+            p_df = p_df[p_df.pid.isin(subset_pids)]
+            logger.info('subset: selected {} instances from df'.format(len(p_df)))
+
+        if cf.server_env:
+            if copy_data:
+                copy_and_unpack_data(logger, p_df.pid.tolist(), cf.fold_dir, cf.data_source_dir, target_dir)
+
+        class_targets = p_df['class_target'].tolist()
+        pids = p_df.pid.tolist()
+        imgs = [os.path.join(pp_data_path, '{}_img.npy'.format(pid)) for pid in pids]
+        segs = [os.path.join(pp_data_path,'{}_rois.npy'.format(pid)) for pid in pids]
+
+        for ix, pid in enumerate(pids):
+            # for the experiment conducted here, malignancy scores are binarized: (benign: 1-2, malignant: 3-5)
+            targets = [1 if ii >= 3 else 0 for ii in class_targets[ix]]
+            data[pid] = {'data': imgs[ix], 'seg': segs[ix], 'pid': pid, 'class_target': targets}
+            data[pid]['fg_slices'] = p_df['fg_slices'].tolist()[ix]
 
     return data
 
@@ -341,7 +364,7 @@ class PatientBatchIterator(SlimDataLoaderBase):
         pid = self.dataset_pids[self.patient_ix]
         patient = self._data[pid]
         data = np.transpose(np.load(patient['data'], mmap_mode='r'), axes=(1, 2, 0))[np.newaxis] # (c, y, x, z)
-        seg = np.transpose(np.load(patient['seg'], mmap_mode='r'), axes=(1, 2, 0))
+        seg = np.transpose(np.load(patient['seg'], mmap_mode='r'), axes=(1, 2, 0)) if patient['seg'] is not None else np.zeros(data.shape)
         batch_class_targets = np.array([patient['class_target']])
 
         # pad data if smaller than patch_size seen during training.
@@ -433,8 +456,9 @@ class PatientBatchIterator(SlimDataLoaderBase):
             patch_batch['patient_roi_labels'] = patient_batch['patient_roi_labels']
             patch_batch['original_img_shape'] = patient_batch['original_img_shape']
 
-            converter = ConvertSegToBoundingBoxCoordinates(self.cf.dim, get_rois_from_seg_flag=False, class_specific_seg_flag=self.cf.class_specific_seg_flag)
-            patch_batch = converter(**patch_batch)
+            if self.cf.patient_path is None:
+                converter = ConvertSegToBoundingBoxCoordinates(self.cf.dim, get_rois_from_seg_flag=False, class_specific_seg_flag=self.cf.class_specific_seg_flag)
+                patch_batch = converter(**patch_batch)
             out_batch = patch_batch
 
         self.patient_ix += 1
@@ -487,3 +511,4 @@ if __name__=="__main__":
     h, mins = divmod(mins, 60)
     t = "{:d}h:{:02d}m:{:02d}s".format(int(h), int(mins), int(secs))
     print("{} total runtime: {}".format(os.path.split(__file__)[1], t))
+

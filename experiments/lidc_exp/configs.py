@@ -25,6 +25,12 @@ class configs(DefaultConfigs):
     def __init__(self, server_env=False):
 
         #########################
+        #      Predictions      #
+        #########################
+
+        self.patient_path = None
+
+        #########################
         #    Preprocessing      #
         #########################
         

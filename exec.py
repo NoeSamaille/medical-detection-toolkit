@@ -148,6 +148,7 @@ def train(logger):
             for param_group in optimizer.param_groups:
                 param_group['lr'] = cf.learning_rate[epoch-1]
 
+                
 def test(logger):
     """
     perform testing for a given fold (or hold out set). save stats in evaluator.
@@ -160,6 +161,21 @@ def test(logger):
     test_results_list = test_predictor.predict_test_set(batch_gen, return_results=True)
     test_evaluator.evaluate_predictions(test_results_list)
     test_evaluator.score_test_df()
+
+
+def predict(logger):
+    """
+    perform prediction for a given fold (or hold out set). save stats in evaluator.
+    """
+    logger.info('starting prediction on model of fold {} in exp {}'.format(cf.fold, cf.exp_dir))
+    net = model.net(cf, logger).cuda()
+    test_predictor = Predictor(cf, net, logger, mode='test')
+    test_evaluator = Evaluator(cf, logger, mode='test')
+    print(cf.dim)
+    batch_gen = data_loader.get_pred_generator(cf, logger)
+    test_results_list = test_predictor.predict_patient(next(batch_gen['pred']))
+    print(len(test_results_list['boxes'][0]))
+    print(test_results_list['seg_preds'].shape)
 
 
 if __name__ == '__main__':
@@ -186,6 +202,8 @@ if __name__ == '__main__':
     parser.add_argument('--no_benchmark', action='store_true', help="Do not use cudnn.benchmark.")
     parser.add_argument('--cuda_device', type=int, default=0, help="Index of CUDA device to use.")
     parser.add_argument('-d', '--dev', default=False, action='store_true', help="development mode: shorten everything")
+    parser.add_argument('--patient_path', type=str, required=False,
+                         help='specifies the npy file of the current patient.')
 
     args = parser.parse_args()
     folds = args.folds
@@ -247,6 +265,26 @@ if __name__ == '__main__':
                 cf.fold = fold
                 logger.set_logfile(fold=fold)
                 test(logger)
+
+    elif args.mode == 'predict':
+
+        cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
+
+        cf.data_dest = args.data_dest
+        logger = utils.get_logger(cf.exp_dir, cf.server_env)
+        data_loader = utils.import_module('dl', os.path.join(args.exp_source, 'data_loader.py'))
+        model = utils.import_module('model', cf.model_path)
+        logger.info("loaded model from {}".format(cf.model_path))
+        if folds is None:
+            folds = range(cf.n_cv_splits)
+
+        with torch.cuda.device(args.cuda_device):
+            for fold in folds:
+                cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
+                cf.fold = fold
+                logger.set_logfile(fold=fold)
+                cf.patient_path=args.patient_path
+                predict(logger)
 
     # load raw predictions saved by predictor during testing, run aggregation algorithms and evaluation.
     elif args.mode == 'analysis':
