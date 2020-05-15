@@ -29,6 +29,7 @@ class configs(DefaultConfigs):
         #########################
 
         self.patient_path = None
+        self.output_dir = None
 
         #########################
         #    Preprocessing      #
@@ -118,7 +119,7 @@ class configs(DefaultConfigs):
         #  Schedule / Selection #
         #########################
 
-        self.num_epochs = 100
+        self.num_epochs = 400
         self.num_train_batches = 200 if self.dim == 2 else 200
         self.batch_size = 20 if self.dim == 2 else 8
 

@@ -174,11 +174,11 @@ def prep_exp(dataset_path, exp_path, server_env, use_stored_settings=True, is_tr
             cf_file = import_module('cf_file', os.path.join(exp_path, 'configs.py'))
             cf = cf_file.configs(server_env)
             # in this mode, previously saved model and backbone need to be found in exp dir.
-            if not os.path.isfile(os.path.join(exp_path, 'model.py')) or \
+            if not os.path.isfile(os.path.join(exp_path, 'mdt_model.py')) or \
                     not os.path.isfile(os.path.join(exp_path, 'backbone.py')):
                 raise Exception(
                     "Selected use_stored_settings option but no model and/or backbone source files exist in exp dir.")
-            cf.model_path = os.path.join(exp_path, 'model.py')
+            cf.model_path = os.path.join(exp_path, 'mdt_model.py')
             cf.backbone_path = os.path.join(exp_path, 'backbone.py')
         else:
             # this case overwrites settings files in exp dir, i.e., default_configs, configs, backbone, model
@@ -191,7 +191,7 @@ def prep_exp(dataset_path, exp_path, server_env, use_stored_settings=True, is_tr
                 shell=True)
             cf_file = import_module('cf_file', os.path.join(dataset_path, 'configs.py'))
             cf = cf_file.configs(server_env)
-            subprocess.call('cp {} {}'.format(cf.model_path, os.path.join(exp_path, 'model.py')), shell=True)
+            subprocess.call('cp {} {}'.format(cf.model_path, os.path.join(exp_path, 'mdt_model.py')), shell=True)
             subprocess.call('cp {} {}'.format(cf.backbone_path, os.path.join(exp_path, 'backbone.py')), shell=True)
             if os.path.isfile(os.path.join(exp_path, "fold_ids.pickle")):
                 subprocess.call('rm {}'.format(os.path.join(exp_path, "fold_ids.pickle")), shell=True)
@@ -200,7 +200,7 @@ def prep_exp(dataset_path, exp_path, server_env, use_stored_settings=True, is_tr
         # testing, use model and backbone stored in exp dir.
         cf_file = import_module('cf_file', os.path.join(exp_path, 'configs.py'))
         cf = cf_file.configs(server_env)
-        cf.model_path = os.path.join(exp_path, 'model.py')
+        cf.model_path = os.path.join(exp_path, 'mdt_model.py')
         cf.backbone_path = os.path.join(exp_path, 'backbone.py')
 
 
@@ -354,6 +354,7 @@ class ModelSelector:
         np.save(os.path.join(save_dir, 'epoch_ranking'), epoch_ranking[:self.cf.save_n_models])
         with open(os.path.join(save_dir, 'monitor_metrics.pickle'), 'wb') as handle:
             pickle.dump(monitor_metrics, handle)
+        return os.path.join(os.path.join(self.cf.fold_dir, f'{epoch_ranking[0]}_best_checkpoint'))
 
 
 

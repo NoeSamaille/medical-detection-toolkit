@@ -11,3 +11,10 @@ __pycache__/*
 *.so
 
 !/assets/*
+
+experiments/exp*
+core.*
+mlruns
+*.nrrd
+predict.sh
+train.sh

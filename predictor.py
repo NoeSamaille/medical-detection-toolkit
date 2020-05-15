@@ -74,12 +74,13 @@ class Predictor:
         # during consolidation of predictions. Default is 1 (no ensembling, e.g. in validation).
         self.n_ens = 1
 
-        if self.mode == 'test':
+        if self.mode == 'test' or self.mode == 'pred':
             try:
                 self.epoch_ranking = np.load(os.path.join(self.cf.fold_dir, 'epoch_ranking.npy'))[:cf.test_n_epochs]
             except:
                 raise RuntimeError('no epoch ranking file in fold directory. '
                                    'seems like you are trying to run testing without prior training...')
+        if self.mode == 'test':
             self.n_ens = cf.test_n_epochs
             if self.cf.test_aug:
                 self.n_ens *= 4
@@ -148,8 +149,7 @@ class Predictor:
         dict_of_patient_results = OrderedDict()
 
         # get paths of all parameter sets to be loaded for temporal ensembling. (or just one for no temp. ensembling).
-        weight_paths = [os.path.join(self.cf.fold_dir, '{}_best_checkpoint'.format(epoch), 'params.pth') for epoch in
-                        self.epoch_ranking]
+        weight_paths = [os.path.join(self.cf.fold_dir, '{}_best_checkpoint'.format(epoch), 'params.pth') for epoch in self.epoch_ranking]
         n_test_plots = min(batch_gen['n_test'], 1)
 
         for rank_ix, weight_path in enumerate(weight_paths):

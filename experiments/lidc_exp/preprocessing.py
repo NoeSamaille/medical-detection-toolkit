@@ -46,13 +46,14 @@ sys.path.append(str(PROJECT_ROOT))
 import utils.exp_utils as utils
 
 
-cf_file = utils.import_module("cf", "configs.py")
+dir_path = os.path.dirname(os.path.realpath(__file__))
+cf_file = utils.import_module("cf", os.path.join(dir_path, "configs.py"))
 cf = cf_file.configs()
 # Load lung segmentation model from MLFlow
 remote_server_uri = "http://mlflow.10.7.13.202.nip.io/"
 mlflow.set_tracking_uri(remote_server_uri)
 model_name = "2-lungs-segmentation"
-unet = mlflow.pytorch.load_model("models:/{}/production".format(model_name))
+unet = mlflow.pytorch.load_model(f"models:/{model_name}/production")
 
 
 def resample_array(src_imgs, src_spacing, target_spacing):
@@ -72,9 +73,9 @@ def resample_array(src_imgs, src_spacing, target_spacing):
 
 
 def resample_array_to_shape(img, spacing, target_shape=[128, 256, 256]):
-    target_spacing = [img.shape[i] * spacing[i] / target_shape[i] for i in range(len(img.shape))]
+    res_spacing = [spacing[ix] * img.shape[::-1][ix] / target_shape[::-1][ix] for ix in range(len(img.shape))]
     resampled_img = resize(img, target_shape, order=1, clip=True, preserve_range=True, mode='edge')
-    return resampled_img, target_spacing
+    return resampled_img, res_spacing
 
 
 ###########################################################
@@ -307,38 +308,48 @@ def lumTrans(img):
 ###########################################################
 
 
-def pp_patient(inputs):
-
-    ix, path = inputs
-    pid = path.split('/')[-1]
-    img = sitk.ReadImage(os.path.join(path, '{}_CT.nrrd'.format(pid)))
-    original_spacing = np.array(img.GetSpacing())
-    img_arr = sitk.GetArrayFromImage(img)
+def preprocess_image(img_path, output_path=None):
+    img_id = os.path.splitext(os.path.basename(img_path))[0]
+    itk_img = sitk.ReadImage(img_path)
+    original_spacing = np.array(itk_img.GetSpacing())
+    img_arr = sitk.GetArrayFromImage(itk_img)
+    original_shape = img_arr.shape
     ls_img_arr = np.copy(img_arr)
-    print('processing {}'.format(pid), img.GetSpacing(), img_arr.shape)
+    print(f'processing {img_id}')
 
     # Resample and Normalize
-    img_arr = resample_array(img_arr, img.GetSpacing(), cf.target_spacing)
+    img_arr = resample_array(img_arr, itk_img.GetSpacing(), cf.target_spacing)
 
     # Compute lungs mask
     ls_img_arr, spacing = data_utils.prep_img_arr(ls_img_arr, original_spacing)
     mask = predict.predict(ls_img_arr, 1, unet, threshold=True, erosion=True)
     torch.cuda.empty_cache()
     mask, spacing = resample_array_to_shape(mask[0][0], spacing, target_shape=img_arr.shape)
-    mask[mask>0.5] = 1
-    mask[mask!=1] = 0
-    
+    mask[mask > 0.5] = 1
+    mask[mask != 1] = 0
+
     # Dilate arround lungs, normalize lum and remove bones (see winners DSB17)
     dilatedMask = process_mask(mask)
     Mask = mask
     extramask = dilatedMask.astype(np.uint8) - Mask.astype(np.uint8)
     bone_thresh = 210
     pad_value = 170
-    img_arr[np.isnan(img_arr)]=-2000
+    img_arr[np.isnan(img_arr)] = -2000
     sliceim = lumTrans(img_arr)
     sliceim = sliceim*dilatedMask+pad_value*(1-dilatedMask).astype('uint8')
-    bones = sliceim*extramask>bone_thresh
+    bones = sliceim * extramask > bone_thresh
     sliceim[bones] = pad_value
+    print(f'done processing {img_id}')
+    if output_path is not None:
+        np.save(output_path, sliceim)
+    return sliceim, itk_img.GetOrigin(), original_spacing, original_shape
+
+
+def pp_patient(inputs):
+
+    ix, path = inputs
+    pid = path.split('/')[-1]
+    sliceim, _, _, _ = preprocess_image(os.path.join(path, '{}_CT.nrrd'.format(pid)))
 
     df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
     df = df[df.patient_id == pid]
@@ -359,12 +370,12 @@ def pp_patient(inputs):
             for ix in range(len(sliceim.shape)):
                 npt.assert_almost_equal(roi.GetSpacing()[ix], img.GetSpacing()[ix])
             mal_labels.append(mal_label)
-            #final_rois[roi_arr > 0.5] = rix
+            # final_rois[roi_arr > 0.5] = rix
             final_rois[roi_arr > 0.5] = 1 # 1 output class
             rix += 1
     except Exception as e:
         print("Error {}".format(pid), e)
-                    
+
     fg_slices = [ii for ii in np.unique(np.argwhere(final_rois != 0)[:, 0])]
     mal_labels = np.array(mal_labels)
 
@@ -386,7 +397,7 @@ def aggregate_meta_info(exp_dir):
             df.loc[len(df)] = pickle.load(handle)
 
     df.to_pickle(os.path.join(exp_dir, 'info_df.pickle'))
-    print ("aggregated meta info to df with length", len(df))
+    print("aggregated meta info to df with length", len(df))
 
 
 if __name__ == "__main__":

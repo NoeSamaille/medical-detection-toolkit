@@ -84,10 +84,27 @@ MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python preprocessing.py
 #### Run training
 
 ```
-MDT_DATASETS_DIR=/path/to/your/lidc/datasets/dir python exec.py --mode train \
+MDT_DATASETS_DIR=/path/to/your/datasets/dir python exec.py -m train [-f 0] \
     --exp_source experiments/lidc_exp \
-    --exp_dir experiments/test_exp
+    --exp_dir experiments/your_exp \
+    --mlflow_uri http://your.mlflow.server.uri \
+    --mlflow_experiment_id "Your MLFlow experiment ID" \
+    --mlflow_artifacts_uri sftp://user:pwd@your.mlflow.server.uri \
 ```
+
+#### Run Prediction
+
+```
+MDT_DATASETS_DIR=/path/to/your/datasets/dir python exec.py -m predict [-f 0] \
+    --exp_source experiments/lidc_exp \
+    --exp_dir experiments/path/to/your/exp \
+    --patient_path /path/to/nrrd \
+    [--mlflow_uri http://your.mlflow.server.uri] \
+    [--mlflow_model_name your_model_name] \
+    [--mlflow_run_id your_mlflow_run_id] \
+```
+
+If `--mlflow_uri` is set but not `--mlflow_run_id`, it will try to fetch the latest production model of model `--mlflow_model_name` on your MLFlow model registry.
 
 ### Classic Setup
 
