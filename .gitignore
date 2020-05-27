@@ -18,3 +18,4 @@ mlruns
 *.nrrd
 predict.sh
 train.sh
+*.csv

@@ -86,7 +86,7 @@ class DefaultConfigs:
         #########################
 
         # perform mirroring at test time. (only XY. Z not done to not blow up predictions times).
-        self.test_aug = True
+        self.test_aug = False
 
         # if True, test data lies in a separate folder and is not part of the cross validation.
         self.hold_out_test_set = False
@@ -139,5 +139,3 @@ class DefaultConfigs:
 
         # for probabilistic detection
         self.n_latent_dims = 0
-
-

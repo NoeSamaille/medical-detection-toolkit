@@ -108,11 +108,6 @@ def train(logger):
                 bix + 1, cf.num_train_batches, epoch, tic_bw - tic_fw, time.time() - tic_bw,
                 time.time() - tic_fw) + results_dict['logger_string'], flush=True, end="")
             train_results_list.append(({k:v for k,v in results_dict.items() if k != "seg_preds"}, batch["pid"]))
-            # MLFlow log metric
-            if results_dict['monitor_values']['loss'] < best_loss:
-                best_loss = results_dict['monitor_values']['loss']
-                mlflow.log_metric('Loss', best_loss, step)
-                step = step + 1
         print()
 
         _, monitor_metrics['train'] = train_evaluator.evaluate_predictions(train_results_list, monitor_metrics['train'])
@@ -139,13 +134,27 @@ def train(logger):
 
                 _, monitor_metrics['val'] = val_evaluator.evaluate_predictions(val_results_list, monitor_metrics['val'])
                 best_model_path = model_selector.run_model_selection(net, optimizer, monitor_metrics, epoch)
-                # Save best model to artifacts
+                # Save best model
                 mlflow.log_artifacts(best_model_path, os.path.join("exp", os.path.basename(cf.fold_dir), 'best_checkpoint'))
+            
+            # Save logs and plots
+            mlflow.log_artifacts(os.path.join(cf.exp_dir, "logs"), os.path.join("exp", 'logs'))
+            mlflow.log_artifacts(cf.plot_dir, os.path.join("exp", os.path.basename(cf.plot_dir)))
 
             # update monitoring and prediction plots
             monitor_metrics.update({"lr":
                                         {str(g): group['lr'] for (g, group) in enumerate(optimizer.param_groups)}})
-            logger.metrics2tboard(monitor_metrics, global_step=epoch)
+
+            # TODO: replace tboard metrics with MLFlow
+            #logger.metrics2tboard(monitor_metrics, global_step=epoch)
+            mlflow.log_metric('learning rate', optimizer.param_groups[0]['lr'], epoch)
+            for key in ['train', 'val']:
+                for tag, val in monitor_metrics[key].items():
+                    val = val[-1]  # maybe remove list wrapping, recording in evaluator?
+                    if 'loss' in tag.lower() and not np.isnan(val):
+                        mlflow.log_metric(f'{key}_{tag}', val, epoch)
+                    elif not np.isnan(val):
+                        mlflow.log_metric(f'{key}_{tag}', val, epoch)
 
             epoch_time = time.time() - start_time
             logger.info('trained epoch {}: took {} ({} train / {} val)'.format(
@@ -301,7 +310,7 @@ if __name__ == '__main__':
                 mlflow.log_param("Resume", args.resume)
                 mlflow.log_param("Epochs", cf.num_epochs)
                 mlflow.log_param("Optimizer", cf.optimizer)
-                mlflow.log_param("Learning Rate", cf.learning_rate[0])
+                mlflow.log_param("Output Classes", cf.head_classes - 1)  # -1 for bg
                 for fold in folds:
                     cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
                     cf.fold = fold
@@ -317,7 +326,28 @@ if __name__ == '__main__':
 
     elif args.mode == 'test':
 
+        # Tries to reach experiment locally
+        if not os.path.exists(args.exp_dir):
+            os.makedirs(args.exp_dir)
+            # Load exp from MLFlow
+            mlflow_tracking = mlflow.tracking.MlflowClient(tracking_uri=args.mlflow_uri)
+            if args.mlflow_run_id is not None:
+                args.exp_dir = mlflow_tracking.download_artifacts(args.mlflow_run_id, "exp", os.path.abspath(args.exp_dir))
+            else:
+                # Get last production model (experiment) from MLFlow model registry
+                run_id = None
+                version = 0
+                for mv in mlflow_tracking.search_model_versions(f"name='{args.mlflow_model_name}'"):
+                    if dict(mv)['current_stage'] == 'Production' and int(dict(mv)['version']) > version:
+                        run_id = dict(mv)['run_id']
+                        version = dict(mv)['version']
+                try:
+                    print(f"Loading production model from MLFLow (version {version})")
+                    args.exp_dir = mlflow_tracking.download_artifacts(run_id, "exp", os.path.abspath(args.exp_dir))
+                except Exception:
+                    raise(Exception("ERROR: No model in production!"))
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
+
         if args.dev:
             folds = [0,1]
             cf.test_n_epochs = 2; cf.max_test_patients = 2

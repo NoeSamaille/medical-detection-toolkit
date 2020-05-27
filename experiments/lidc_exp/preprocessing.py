@@ -299,7 +299,7 @@ def lumTrans(img):
     newimg = (img-lungwin[0])/(lungwin[1]-lungwin[0])
     newimg[newimg<0]=0
     newimg[newimg>1]=1
-    newimg = (newimg*255).astype('uint8')
+    newimg = (newimg*255).astype('float16')
     return newimg
 
 
@@ -349,8 +349,13 @@ def pp_patient(inputs):
 
     ix, path = inputs
     pid = path.split('/')[-1]
-    sliceim, _, _, _ = preprocess_image(os.path.join(path, '{}_CT.nrrd'.format(pid)))
-
+    if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_rois.npy')):
+        sliceim, _, original_spacing, _ = preprocess_image(os.path.join(path, f'{pid}_CT.nrrd'))
+    else:
+        print(f"{pid} image already exists, load it...")
+        sliceim = np.load(os.path.join(cf.pp_dir, f'{pid}_rois.npy'))
+        original_spacing = sitk.ReadImage(os.path.join(path, f'{pid}_CT.nrrd')).GetSpacing()
+        
     df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
     df = df[df.patient_id == pid]
 
@@ -362,28 +367,29 @@ def pp_patient(inputs):
     try:
         for roi_path in roi_paths:
             rid = os.path.splitext(roi_path)[0]
-            mal_label = df[df.nodule_id == rid].malignancy.values[0]
+            mal_label = int(np.mean(df[df.nodule_id == rid].malignancy.values))
             roi = sitk.ReadImage(os.path.join(cf.raw_data_dir, pid, roi_path))
             roi_arr = sitk.GetArrayFromImage(roi).astype(np.uint8)
             roi_arr = resample_array(roi_arr, roi.GetSpacing(), cf.target_spacing)
             assert roi_arr.shape == sliceim.shape, [roi_arr.shape, sliceim.shape, pid, roi.GetSpacing()]
             for ix in range(len(sliceim.shape)):
-                npt.assert_almost_equal(roi.GetSpacing()[ix], img.GetSpacing()[ix])
+                npt.assert_almost_equal(roi.GetSpacing()[ix], original_spacing[ix])
             mal_labels.append(mal_label)
-            # final_rois[roi_arr > 0.5] = rix
-            final_rois[roi_arr > 0.5] = 1 # 1 output class
+            final_rois[roi_arr > 0.5] = rix
+            # final_rois[roi_arr > 0.5] = 1 # 1 output class
             rix += 1
     except Exception as e:
-        print("Error {}".format(pid), e)
+        print("Error {}:".format(pid), e)
 
     fg_slices = [ii for ii in np.unique(np.argwhere(final_rois != 0)[:, 0])]
     mal_labels = np.array(mal_labels)
 
     np.save(os.path.join(cf.pp_dir, '{}_rois.npy'.format(pid)), final_rois)
-    np.save(os.path.join(cf.pp_dir, '{}_img.npy'.format(pid)), sliceim)
+    if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_rois.npy')):
+        np.save(os.path.join(cf.pp_dir, '{}_img.npy'.format(pid)), sliceim)
 
     with open(os.path.join(cf.pp_dir, 'meta_info_{}.pickle'.format(pid)), 'wb') as handle:
-        meta_info_dict = {'pid': pid, 'class_target': mal_labels, 'spacing': img.GetSpacing(), 'fg_slices': fg_slices}
+        meta_info_dict = {'pid': pid, 'class_target': mal_labels, 'spacing': original_spacing, 'fg_slices': fg_slices}
         pickle.dump(meta_info_dict, handle)
     print('done processing {}'.format(pid))
 
@@ -400,11 +406,25 @@ def aggregate_meta_info(exp_dir):
     print("aggregated meta info to df with length", len(df))
 
 
+def select_paths(data_dir):
+    import csv
+    # Ignore some CT scans from csv file
+    pids_to_ignore = []
+    with open('pp_scans_checkup_bkp.csv', newline='') as csvfile:
+        reader = csv.DictReader(csvfile, delimiter=',')
+        for row in reader:
+            if row['flip'] or row['crap'] or row['poor'] > 2 or row['warn']:
+                print(f'ignoring pid {row["pid"]} (flip {row["flip"]}; crap {row["crap"]}; noise {row["poor"]}; warn {row["warn"]}; note: {row["note"]})')
+                pids_to_ignore.append(row["pid"])
+    paths = [os.path.join(cf.raw_data_dir, ii) for ii in os.listdir(data_dir) if ii not in pids_to_ignore]
+    return paths
+
+
 if __name__ == "__main__":
 
     start_time = time.time()
 
-    paths = [os.path.join(cf.raw_data_dir, ii) for ii in os.listdir(cf.raw_data_dir)]
+    paths = select_paths(cf.raw_data_dir)
 
     """
     paths = []

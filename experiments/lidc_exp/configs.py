@@ -121,7 +121,7 @@ class configs(DefaultConfigs):
 
         self.num_epochs = 400
         self.num_train_batches = 200 if self.dim == 2 else 200
-        self.batch_size = 20 if self.dim == 2 else 8
+        self.batch_size = 20 if self.dim == 2 else 10
 
         self.do_validation = True
         # decide whether to validate on entire patient volumes (like testing) or sampled patches (like training)
@@ -130,7 +130,7 @@ class configs(DefaultConfigs):
         if self.val_mode == 'val_patient':
             self.max_val_patients = 50  # if 'None' iterates over entire val_set once.
         if self.val_mode == 'val_sampling':
-            self.num_val_batches = 50
+            self.num_val_batches = 25
 
         self.optimizer = "Adam"
 
@@ -152,11 +152,13 @@ class configs(DefaultConfigs):
         self.min_save_thresh = 0 if self.dim == 2 else 0
 
         self.report_score_level = ['patient', 'rois']  # choose list from 'patient', 'rois'
-        self.class_dict = {1: 'benign', 2: 'malignant'}  # 0 is background.
-        self.patient_class_of_interest = 2  # patient metrics are only plotted for one class.
+        #self.class_dict = {1: 'benign', 2: 'malignant'}  # 0 is background.
+        #self.patient_class_of_interest = 2  # patient metrics are only plotted for one class.
+        self.class_dict = {1: 'nodule'} # 1 output class
+        self.patient_class_of_interest = 1
         self.ap_match_ious = [0.1]  # list of ious to be evaluated for ap-scoring.
 
-        self.model_selection_criteria = ['malignant_ap', 'benign_ap'] # criteria to average over for saving epochs.
+        self.model_selection_criteria = ['patient_ap'] # ['malignant_ap', 'benign_ap'] # criteria to average over for saving epochs.
         self.min_det_thresh = 0.1  # minimum confidence value to select predictions for evaluation.
 
         # threshold for clustering predictions together (wcs = weighted cluster scoring).
@@ -165,7 +167,7 @@ class configs(DefaultConfigs):
         self.wcs_iou = 1e-5
 
         self.plot_prediction_histograms = True
-        self.plot_stat_curves = False
+        self.plot_stat_curves = True
 
         #########################
         #   Data Augmentation   #
@@ -240,16 +242,16 @@ class configs(DefaultConfigs):
         # since evaluation is detection-driven (box-matching) and not instance segmentation-driven (iou-matching),
         # mask-outputs are optional.
         self.return_masks_in_val = True
-        self.return_masks_in_test = False
+        self.return_masks_in_test = True
 
         # set number of proposal boxes to plot after each epoch.
         self.n_plot_rpn_props = 5 if self.dim == 2 else 30
 
         # number of classes for head networks: n_foreground_classes + 1 (background)
-        self.head_classes = 3
+        self.head_classes = 2
 
         # seg_classes hier refers to the first stage classifier (RPN)
-        self.num_seg_classes = 2  # foreground vs. background
+        self.num_seg_classes = 1  # foreground vs. background
 
         # feature map strides per pyramid level are inferred from architecture.
         self.backbone_strides = {'xy': [4, 8, 16, 32], 'z': [1, 2, 4, 8]}
