@@ -198,7 +198,7 @@ def predict(logger, save_seg=False):
     test_predictor = Predictor(cf, net, logger, mode='pred')
     logger.info(f'starting prediction on model of fold {cf.fold} (epoch {np.max(test_predictor.epoch_ranking)}) in exp {cf.exp_dir}')
     output_path = os.path.join(cf.output_dir, 'pp_img.npy')
-    _, itk_origin, itk_spacing, itk_shape = preprocessing.preprocess_image(cf.patient_path, output_path)
+    _, itk_origin, itk_spacing, itk_shape = preprocessing.preprocess_image(cf.patient_path, output_path, save_lungs_mask=True)
     cf.patient_path = output_path
     batch_gen = data_loader.get_pred_generator(cf, logger)
     weight_path = os.path.join(cf.fold_dir, '{}_best_checkpoint'.format(np.max(test_predictor.epoch_ranking)), 'params.pth')
@@ -208,7 +208,7 @@ def predict(logger, save_seg=False):
         # Build segmentation mask
         seg = test_results_list['seg_preds'][0][0]
         seg_mask = np.zeros(seg.shape).astype(np.uint8)
-        seg_tresh = 0.5
+        seg_tresh = cf.min_det_thresh  # minimum confidence value to select predictions
         seg_mask[seg > seg_tresh] = 1
         # Swap seg axes to match original image
         seg_mask = np.swapaxes(seg_mask, 0, 2)
@@ -219,7 +219,7 @@ def predict(logger, save_seg=False):
         seg_mask[seg_mask > 0] = 1
         seg_mask = seg_mask.astype(np.uint8)
         # Save segmentation to NRRD file
-        data_utils.write_itk(seg_mask, itk_origin, itk_spacing, os.path.join(cf.output_dir, 'seg.nrrd'))
+        data_utils.write_itk(seg_mask, itk_origin, itk_spacing, os.path.join(cf.output_dir, 'nodules_seg.nrrd'))
 
 
 if __name__ == '__main__':
@@ -267,6 +267,9 @@ if __name__ == '__main__':
 
     if args.mode == 'train' or args.mode == 'train_test':
 
+        # Enable Large Model Support (LMS)
+        torch.cuda.set_enabled_lms(True)
+
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, args.use_stored_settings)
         if args.dev:
             folds = [0,1]
@@ -311,6 +314,9 @@ if __name__ == '__main__':
                 mlflow.log_param("Epochs", cf.num_epochs)
                 mlflow.log_param("Optimizer", cf.optimizer)
                 mlflow.log_param("Output Classes", cf.head_classes - 1)  # -1 for bg
+                mlflow.log_param("Batch size", cf.batch_size)
+                mlflow.log_param("Nb RPN feature maps", cf.n_rpn_features)
+                mlflow.log_param("Model Selection Criteria", ', '.join(cf.model_selection_criteria))
                 for fold in folds:
                     cf.fold_dir = os.path.join(cf.exp_dir, 'fold_{}'.format(fold))
                     cf.fold = fold
@@ -383,12 +389,12 @@ if __name__ == '__main__':
                 for mv in mlflow_tracking.search_model_versions(f"name='{args.mlflow_model_name}'"):
                     if dict(mv)['current_stage'] == 'Production' and int(dict(mv)['version']) > version:
                         run_id = dict(mv)['run_id']
-                        version = dict(mv)['version']
+                        version = int(dict(mv)['version'])
                 try:
                     print(f"Loading production model from MLFLow (version {version})")
                     args.exp_dir = mlflow_tracking.download_artifacts(run_id, "exp", os.path.abspath(args.exp_dir))
                 except Exception:
-                    raise(Exception("ERROR: No model in production!"))
+                    raise(Exception("ERROR importing model from MLFlow"))
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
 
         # Create output directory

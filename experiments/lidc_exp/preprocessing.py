@@ -299,7 +299,7 @@ def lumTrans(img):
     newimg = (img-lungwin[0])/(lungwin[1]-lungwin[0])
     newimg[newimg<0]=0
     newimg[newimg>1]=1
-    newimg = (newimg*255).astype('float16')
+    newimg = (newimg*255).astype(np.float16)
     return newimg
 
 
@@ -308,23 +308,27 @@ def lumTrans(img):
 ###########################################################
 
 
-def preprocess_image(img_path, output_path=None):
+def preprocess_image(img_path, output_path=None, save_lungs_mask=False):
     img_id = os.path.splitext(os.path.basename(img_path))[0]
     itk_img = sitk.ReadImage(img_path)
     original_spacing = np.array(itk_img.GetSpacing())
     img_arr = sitk.GetArrayFromImage(itk_img)
     original_shape = img_arr.shape
     ls_img_arr = np.copy(img_arr)
-    print(f'processing {img_id}')
+    print(f'preprocessing {img_id}')
 
-    # Resample and Normalize
+    # Resample img array
     img_arr = resample_array(img_arr, itk_img.GetSpacing(), cf.target_spacing)
+    lum_img_arr = np.copy(img_arr)
+    img_arr = np.clip(img_arr, -1200, 600)
+    img_arr = img_arr.astype(np.float32)
+    img_arr = (img_arr - np.mean(img_arr)) / np.std(img_arr).astype(np.float16)
 
     # Compute lungs mask
     ls_img_arr, spacing = data_utils.prep_img_arr(ls_img_arr, original_spacing)
     mask = predict.predict(ls_img_arr, 1, unet, threshold=True, erosion=True)
     torch.cuda.empty_cache()
-    mask, spacing = resample_array_to_shape(mask[0][0], spacing, target_shape=img_arr.shape)
+    mask, _ = resample_array_to_shape(mask[0][0], spacing, target_shape=img_arr.shape)
     mask[mask > 0.5] = 1
     mask[mask != 1] = 0
 
@@ -333,27 +337,38 @@ def preprocess_image(img_path, output_path=None):
     Mask = mask
     extramask = dilatedMask.astype(np.uint8) - Mask.astype(np.uint8)
     bone_thresh = 210
-    pad_value = 170
-    img_arr[np.isnan(img_arr)] = -2000
-    sliceim = lumTrans(img_arr)
-    sliceim = sliceim*dilatedMask+pad_value*(1-dilatedMask).astype('uint8')
+    pad_value = 1  #170
+    lum_img_arr[np.isnan(lum_img_arr)] = -2000
+    sliceim = lumTrans(lum_img_arr)
+    #sliceim = sliceim*dilatedMask+pad_value*(1-dilatedMask).astype('uint8')
     bones = sliceim * extramask > bone_thresh
-    sliceim[bones] = pad_value
-    print(f'done processing {img_id}')
+    #sliceim[bones] = pad_value
+    img_arr = img_arr*dilatedMask+pad_value*(1-dilatedMask).astype('uint8')
+    img_arr[bones] = pad_value
+
+    print(f'done preprocessing {img_id}')
     if output_path is not None:
-        np.save(output_path, sliceim)
-    return sliceim, itk_img.GetOrigin(), original_spacing, original_shape
+        # Save img to output path
+        np.save(output_path, img_arr)
+        # Save lungs segmentation to NRRD
+        if save_lungs_mask is True:
+            mask, _ = resample_array_to_shape(mask, spacing, original_shape)
+            mask[mask <= 0] = 0
+            mask[mask > 0] = 1
+            mask = mask.astype("uint8")
+            utils.write_itk(os.path.join(os.path.dirname(output_path), 'lungs_seg.nrrd'), mask, itk_img.GetOrigin(), original_spacing)
+    return img_arr, itk_img.GetOrigin(), original_spacing, original_shape
 
 
 def pp_patient(inputs):
 
     ix, path = inputs
     pid = path.split('/')[-1]
-    if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_rois.npy')):
-        sliceim, _, original_spacing, _ = preprocess_image(os.path.join(path, f'{pid}_CT.nrrd'))
+    if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_img.npy')):
+        sliceim, _, original_spacing, _ = preprocess_image(os.path.join(path, f'{pid}_CT.nrrd'), os.path.join(cf.pp_dir, f'{pid}_img.npy'))
     else:
         print(f"{pid} image already exists, load it...")
-        sliceim = np.load(os.path.join(cf.pp_dir, f'{pid}_rois.npy'))
+        sliceim = np.load(os.path.join(cf.pp_dir, f'{pid}_img.npy'))
         original_spacing = sitk.ReadImage(os.path.join(path, f'{pid}_CT.nrrd')).GetSpacing()
         
     df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
@@ -385,8 +400,6 @@ def pp_patient(inputs):
     mal_labels = np.array(mal_labels)
 
     np.save(os.path.join(cf.pp_dir, '{}_rois.npy'.format(pid)), final_rois)
-    if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_rois.npy')):
-        np.save(os.path.join(cf.pp_dir, '{}_img.npy'.format(pid)), sliceim)
 
     with open(os.path.join(cf.pp_dir, 'meta_info_{}.pickle'.format(pid)), 'wb') as handle:
         meta_info_dict = {'pid': pid, 'class_target': mal_labels, 'spacing': original_spacing, 'fg_slices': fg_slices}

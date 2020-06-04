@@ -76,6 +76,8 @@ class configs(DefaultConfigs):
         #      Data Loader      #
         #########################
 
+        self.n_cv_splits = 10 # To split data 80 train - 10 val - 10 test
+
         # select modalities from preprocessed data
         self.channels = [0]
         self.n_channels = len(self.channels)
@@ -84,7 +86,7 @@ class configs(DefaultConfigs):
         self.pre_crop_size_2D = [300, 300]
         self.patch_size_2D = [288, 288]
         self.pre_crop_size_3D = [156, 156, 96]
-        self.patch_size_3D = [128, 128, 64]
+        self.patch_size_3D = [128, 128, 128]
         self.patch_size = self.patch_size_2D if self.dim == 2 else self.patch_size_3D
         self.pre_crop_size = self.pre_crop_size_2D if self.dim == 2 else self.pre_crop_size_3D
 
@@ -158,7 +160,7 @@ class configs(DefaultConfigs):
         self.patient_class_of_interest = 1
         self.ap_match_ious = [0.1]  # list of ious to be evaluated for ap-scoring.
 
-        self.model_selection_criteria = ['patient_ap'] # ['malignant_ap', 'benign_ap'] # criteria to average over for saving epochs.
+        self.model_selection_criteria = ['nodule_ap'] # ['malignant_ap', 'benign_ap'] # criteria to average over for saving epochs.
         self.min_det_thresh = 0.1  # minimum confidence value to select predictions for evaluation.
 
         # threshold for clustering predictions together (wcs = weighted cluster scoring).
@@ -264,7 +266,7 @@ class configs(DefaultConfigs):
         self.pyramid_levels = [0, 1, 2, 3]
 
         # number of feature maps in rpn. typically lowered in 3D to save gpu-memory.
-        self.n_rpn_features = 512 if self.dim == 2 else 128
+        self.n_rpn_features = 512 if self.dim == 2 else 256
 
         # anchor ratios and strides per position in feature maps.
         self.rpn_anchor_ratios = [0.5, 1, 2]
@@ -339,7 +341,7 @@ class configs(DefaultConfigs):
                                            self.rpn_anchor_scales['z']]
             self.n_anchors_per_pos = len(self.rpn_anchor_ratios) * 3
 
-            self.n_rpn_features = 256 if self.dim == 2 else 64
+            self.n_rpn_features = 256 if self.dim == 2 else 256
 
             # pre-selection of detections for NMS-speedup. per entire batch.
             self.pre_nms_limit = 10000 if self.dim == 2 else 50000
