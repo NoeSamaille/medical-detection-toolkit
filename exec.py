@@ -136,7 +136,7 @@ def train(logger):
                 best_model_path = model_selector.run_model_selection(net, optimizer, monitor_metrics, epoch)
                 # Save best model
                 mlflow.log_artifacts(best_model_path, os.path.join("exp", os.path.basename(cf.fold_dir), 'best_checkpoint'))
-            
+
             # Save logs and plots
             mlflow.log_artifacts(os.path.join(cf.exp_dir, "logs"), os.path.join("exp", 'logs'))
             mlflow.log_artifacts(cf.plot_dir, os.path.join("exp", os.path.basename(cf.plot_dir)))
@@ -255,6 +255,8 @@ if __name__ == '__main__':
                          help='specifies the npy file of the current patient.')
     parser.add_argument('--output_dir', type=str, required=False, default="pred_output", 
                          help='Output directory')
+    parser.add_argument('--large_model_support', action="store_true", default=False,
+                        help='If given, enable Large Model Support (LMS) during training.')
 
     args = parser.parse_args()
     folds = args.folds
@@ -268,7 +270,8 @@ if __name__ == '__main__':
     if args.mode == 'train' or args.mode == 'train_test':
 
         # Enable Large Model Support (LMS)
-        torch.cuda.set_enabled_lms(True)
+        if args.large_model_support is True:
+            torch.cuda.set_enabled_lms(True)
 
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, args.use_stored_settings)
         if args.dev:

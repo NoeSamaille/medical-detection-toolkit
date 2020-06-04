@@ -90,6 +90,7 @@ MDT_DATASETS_DIR=/path/to/your/datasets/dir python exec.py -m train [-f 0] \
     --mlflow_uri http://your.mlflow.server.uri \
     --mlflow_experiment_id "Your MLFlow experiment ID" \
     --mlflow_artifacts_uri sftp://user:pwd@your.mlflow.server.uri \
+    [--large_model_support]
 ```
 
 #### Run Prediction

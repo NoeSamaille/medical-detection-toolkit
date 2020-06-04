@@ -23,3 +23,6 @@ unittest2==1.1.0
 urllib3==1.25.7
 wcwidth==0.1.7
 Werkzeug==1.0.1
+
+mlflow==1.7.2
+pysftp==0.2.9
