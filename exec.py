@@ -145,16 +145,16 @@ def train(logger):
             monitor_metrics.update({"lr":
                                         {str(g): group['lr'] for (g, group) in enumerate(optimizer.param_groups)}})
 
-            # TODO: replace tboard metrics with MLFlow
+            # replace tboard metrics with MLFlow
             #logger.metrics2tboard(monitor_metrics, global_step=epoch)
-            mlflow.log_metric('learning rate', optimizer.param_groups[0]['lr'], epoch)
+            mlflow.log_metric('learning rate', optimizer.param_groups[0]['lr'], cf.num_epochs * cf.fold + epoch)
             for key in ['train', 'val']:
                 for tag, val in monitor_metrics[key].items():
                     val = val[-1]  # maybe remove list wrapping, recording in evaluator?
                     if 'loss' in tag.lower() and not np.isnan(val):
-                        mlflow.log_metric(f'{key}_{tag}', val, epoch)
+                        mlflow.log_metric(f'{key}_{tag}', val, cf.num_epochs * cf.fold + epoch)
                     elif not np.isnan(val):
-                        mlflow.log_metric(f'{key}_{tag}', val, epoch)
+                        mlflow.log_metric(f'{key}_{tag}', val, cf.num_epochs * cf.fold + epoch)
 
             epoch_time = time.time() - start_time
             logger.info('trained epoch {}: took {} ({} train / {} val)'.format(

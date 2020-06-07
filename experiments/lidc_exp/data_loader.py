@@ -49,7 +49,7 @@ def get_train_generators(cf, logger):
     If cf.hold_out_test_set is True, adds the test split to the training data.
     """
     all_data = load_dataset(cf, logger)
-    all_pids_list = np.unique([v['pid'] for (k, v) in all_data.items()])
+    all_pids_list = np.unique([v['pid'] for (k, v) in all_data.items() if 'AUG' not in v['pid']])
 
     splits_file = os.path.join(cf.exp_dir, 'fold_ids.pickle')
     if not os.path.exists(splits_file) and not cf.created_fold_id_pickle:
@@ -69,10 +69,13 @@ def get_train_generators(cf, logger):
     if cf.hold_out_test_set:
         train_pids += [all_pids_list[ix] for ix in test_ix]
 
+    gan_pids = [v['pid'] for (k, v) in all_data.items() if 'AUG' in v['pid']]
+    train_pids += gan_pids
+
     train_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in train_pids)}
     val_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in val_pids)}
 
-    logger.info("data set loaded with: {} train / {} val / {} test patients".format(len(train_ix), len(val_ix), len(test_ix)))
+    logger.info("data set loaded with: {} train / {} val / {} test patients".format(len(train_pids), len(val_ix), len(test_ix)))
     batch_gen = {}
     batch_gen['train'] = create_data_gen_pipeline(train_data, cf=cf, is_training=True)
     batch_gen['val_sampling'] = create_data_gen_pipeline(val_data, cf=cf, is_training=False)

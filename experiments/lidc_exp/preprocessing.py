@@ -365,14 +365,17 @@ def pp_patient(inputs):
     ix, path = inputs
     pid = path.split('/')[-1]
     if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_img.npy')):
-        sliceim, _, original_spacing, _ = preprocess_image(os.path.join(path, f'{pid}_CT.nrrd'), os.path.join(cf.pp_dir, f'{pid}_img.npy'))
+        scan_path = os.path.join(path, f'{pid.replace("-AUG", "")}_CT_0.nrrd') if 'AUG' in pid else os.path.join(path, f'{pid}_CT.nrrd')
+        sliceim, _, original_spacing, _ = preprocess_image(scan_path, os.path.join(cf.pp_dir, f'{pid}_img.npy'))
     else:
         print(f"{pid} image already exists, load it...")
         sliceim = np.load(os.path.join(cf.pp_dir, f'{pid}_img.npy'))
         original_spacing = sitk.ReadImage(os.path.join(path, f'{pid}_CT.nrrd')).GetSpacing()
-        
-    df = pd.read_csv(os.path.join(cf.root_dir, 'characteristics.csv'), sep=';')
-    df = df[df.patient_id == pid]
+
+    char_path = 'characteristics_aug.csv' if 'AUG' in pid else 'characteristics.csv'
+    df = pd.read_csv(os.path.join(cf.root_dir, char_path), sep=';') # 'characteristics.csv'
+    pid_filter = pid.replace('-AUG', '_0') if 'AUG' in pid else pid
+    df = df[df.patient_id == pid_filter]
 
     final_rois = np.zeros_like(sliceim, dtype=np.uint8)
     mal_labels = []
@@ -419,7 +422,7 @@ def aggregate_meta_info(exp_dir):
     print("aggregated meta info to df with length", len(df))
 
 
-def select_paths(data_dir):
+def select_paths(data_dir, filter_pid=None):
     import csv
     # Ignore some CT scans from csv file
     pids_to_ignore = []
@@ -429,7 +432,10 @@ def select_paths(data_dir):
             if row['flip'] or row['crap'] or row['poor'] > 2 or row['warn']:
                 print(f'ignoring pid {row["pid"]} (flip {row["flip"]}; crap {row["crap"]}; noise {row["poor"]}; warn {row["warn"]}; note: {row["note"]})')
                 pids_to_ignore.append(row["pid"])
+                pids_to_ignore.append(f'{row["pid"]}-AUG')
     paths = [os.path.join(cf.raw_data_dir, ii) for ii in os.listdir(data_dir) if ii not in pids_to_ignore]
+    if filter_pid is not None:
+        paths = [p for p in paths if filter_pid in p]
     return paths
 
 
@@ -437,7 +443,8 @@ if __name__ == "__main__":
 
     start_time = time.time()
 
-    paths = select_paths(cf.raw_data_dir)
+    paths = select_paths(cf.raw_data_dir, filter_pid='AUG')
+    print(f'processing {len(paths)} patients')
 
     """
     paths = []
