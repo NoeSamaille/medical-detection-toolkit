@@ -63,14 +63,18 @@ def get_train_generators(cf, logger):
 
     train_ix, val_ix, test_ix, _ = fg[cf.fold]
 
+    if cf.train_set_proportion < 1.0:
+        train_ix = np.random.choice(train_ix, int(cf.train_set_proportion*len(train_ix)))
+
     train_pids = [all_pids_list[ix] for ix in train_ix]
     val_pids = [all_pids_list[ix] for ix in val_ix]
 
     if cf.hold_out_test_set:
         train_pids += [all_pids_list[ix] for ix in test_ix]
 
-    gan_pids = [v['pid'] for (k, v) in all_data.items() if 'AUG' in v['pid']]
-    train_pids += gan_pids
+    if cf.gan_dataset:
+        gan_pids = [v['pid'] for (k, v) in all_data.items() if 'AUG' in v['pid']]
+        train_pids += gan_pids
 
     train_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in train_pids)}
     val_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in val_pids)}
@@ -174,7 +178,9 @@ def load_dataset(cf, logger, subset_ixs=None, pp_data_path=None, pp_name=None, p
             logger.warning('WARNING: using prototyping data subset!!!')
 
         if subset_ixs is not None:
-            subset_pids = [np.unique(p_df.pid.tolist())[ix] for ix in subset_ixs]
+            pids = p_df.pid.tolist()
+            pids = [pid for pid in pids if 'AUG' not in pid]  # cannot load a gan patient in subset
+            subset_pids = [np.unique(pids)[ix] for ix in subset_ixs]
             p_df = p_df[p_df.pid.isin(subset_pids)]
             logger.info('subset: selected {} instances from df'.format(len(p_df)))
 

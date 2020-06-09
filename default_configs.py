@@ -44,6 +44,9 @@ class DefaultConfigs:
         #      Data Loader      #
         #########################
 
+        self.gan_dataset = False
+        self.train_set_proportion = 1.0
+
         #random seed for fold_generator and batch_generator.
         self.seed = 0
 

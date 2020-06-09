@@ -76,7 +76,9 @@ class configs(DefaultConfigs):
         #      Data Loader      #
         #########################
 
-        self.n_cv_splits = 5 # 10 to split data 80 train - 10 val - 10 test
+        self.train_set_proportion = 0.75
+
+        self.n_cv_splits = 5  # 10 to split data 80 train - 10 val - 10 test
 
         # select modalities from preprocessed data
         self.channels = [0]
