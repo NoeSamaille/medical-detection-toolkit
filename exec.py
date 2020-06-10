@@ -267,11 +267,11 @@ if __name__ == '__main__':
     if args.mlflow_uri is not None:
         mlflow.set_tracking_uri(args.mlflow_uri)
 
-    if args.mode == 'train' or args.mode == 'train_test':
+    # Enable Large Model Support (LMS)
+    if args.large_model_support is True:
+        torch.cuda.set_enabled_lms(True)
 
-        # Enable Large Model Support (LMS)
-        if args.large_model_support is True:
-            torch.cuda.set_enabled_lms(True)
+    if args.mode == 'train' or args.mode == 'train_test':
 
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, args.use_stored_settings)
         if args.dev:
