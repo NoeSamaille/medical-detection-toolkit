@@ -79,7 +79,7 @@ class configs(DefaultConfigs):
         self.gan_dataset = False
         self.train_set_proportion = 1.0
 
-        self.n_cv_splits = 5  # 10 to split data 80 train - 10 val - 10 test
+        self.n_cv_splits = 10  # 10 to split data 80 train - 10 val - 10 test
 
         # select modalities from preprocessed data
         self.channels = [0]

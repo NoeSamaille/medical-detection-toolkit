@@ -356,7 +356,7 @@ def preprocess_image(img_path, output_path=None, save_lungs_mask=False):
             mask[mask <= 0] = 0
             mask[mask > 0] = 1
             mask = mask.astype("uint8")
-            utils.write_itk(os.path.join(os.path.dirname(output_path), 'lungs_seg.nrrd'), mask, itk_img.GetOrigin(), original_spacing)
+            data_utils.write_itk(os.path.join(os.path.dirname(output_path), 'lungs_seg.nrrd'), mask, itk_img.GetOrigin(), original_spacing)
     return img_arr, itk_img.GetOrigin(), original_spacing, original_shape
 
 
