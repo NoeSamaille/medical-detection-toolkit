@@ -26,6 +26,8 @@ class DefaultConfigs:
         #         I/O           #
         #########################
 
+        self.model_version = 1
+
         self.model = model
         self.dim = dim
         # int [0 < dataset_size]. select n patients from dataset for prototyping.

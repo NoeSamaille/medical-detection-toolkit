@@ -19,6 +19,7 @@
 import argparse
 import os, warnings
 import time
+import json
 
 import torch
 
@@ -38,6 +39,18 @@ for msg in ["Attempting to set identical bottom==top results",
             ".*invalid value encountered in double_scalars.*",
             ".*Mean of empty slice.*"]:
     warnings.filterwarnings("ignore", msg)
+
+
+class NumpyArrayEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        elif isinstance(obj, np.floating):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        else:
+            return super(NumpyArrayEncoder, self).default(obj)
 
 
 def train(logger):
@@ -204,6 +217,15 @@ def predict(logger, save_seg=False):
     weight_path = os.path.join(cf.fold_dir, '{}_best_checkpoint'.format(np.max(test_predictor.epoch_ranking)), 'params.pth')
     net.load_state_dict(torch.load(weight_path))
     test_results_list = test_predictor.predict_patient(next(batch_gen['pred']))
+    # Save boxes to json
+    seg_file = os.path.join(cf.output_dir, 'nodules_seg.nrrd')
+    with open(os.path.join(cf.output_dir, 'output.json'), 'w') as json_file:
+        json_out = {}
+        json_out["filename_seg"] = seg_file
+        json_out["result"] = test_results_list['boxes'][0]
+        json_out["obj_count"] = len(test_results_list['boxes'][0])
+        json_out["model_version"] = cf.model_version
+        json.dump(json_out, json_file, sort_keys=True, indent=4, cls=NumpyArrayEncoder)
     if save_seg:
         # Build segmentation mask
         seg = test_results_list['seg_preds'][0][0]
@@ -219,7 +241,7 @@ def predict(logger, save_seg=False):
         seg_mask[seg_mask > 0] = 1
         seg_mask = seg_mask.astype(np.uint8)
         # Save segmentation to NRRD file
-        data_utils.write_itk(seg_mask, itk_origin, itk_spacing, os.path.join(cf.output_dir, 'nodules_seg.nrrd'))
+        data_utils.write_itk(seg_mask, itk_origin, itk_spacing, seg_file)
 
 
 if __name__ == '__main__':
@@ -336,6 +358,7 @@ if __name__ == '__main__':
     elif args.mode == 'test':
 
         # Tries to reach experiment locally
+        version = 1
         if not os.path.exists(args.exp_dir):
             os.makedirs(args.exp_dir)
             # Load exp from MLFlow
@@ -356,6 +379,7 @@ if __name__ == '__main__':
                 except Exception:
                     raise(Exception("ERROR: No model in production!"))
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
+        cf.model_version = version
 
         if args.dev:
             folds = [0,1]
@@ -379,6 +403,7 @@ if __name__ == '__main__':
     elif args.mode == 'predict':
 
         # Tries to reach experiment locally
+        version = 1
         if not os.path.exists(args.exp_dir):
             os.makedirs(args.exp_dir)
             # Load exp from MLFlow
@@ -399,6 +424,7 @@ if __name__ == '__main__':
                 except Exception:
                     raise(Exception("ERROR importing model from MLFlow"))
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, is_training=False, use_stored_settings=True)
+        cf.model_version = version
 
         # Create output directory
         os.makedirs(args.output_dir, exist_ok=True)
