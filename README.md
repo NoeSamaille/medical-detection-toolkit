@@ -52,12 +52,9 @@ Please cite the original publication [3].
 
 ```
 git clone https://gitlab.com/PSLC/ia-medical/medical-detection-toolkit -b torch1x
-cd medicaldetectiontoolkit
-conda create --name mdt --clone wmlce
-conda activate mdt
+cd medical-detection-toolkit
 pip install /path/to/install-files/SimpleITK-1.2.0+gd6026-cp37-cp37m-linux_ppc64le.whl
-pip install ./custom_extensions/nms
-pip install batchgenerators pynrrd pylidc
+pip install batchgenerators pynrrd pylidc pynacl==1.3.0 mlflow==1.7.2 pysftp==0.2.9 ./custom_extensions/nms
 ```
 
 #### Prepare data
