@@ -109,18 +109,28 @@ def train(logger):
 
         net.train()
         train_results_list = []
-        for bix in range(cf.num_train_batches):
-            batch = next(batch_gen['train'])
+        bix = 0
+        seen_pids = []
+        while True:
+            bix = bix + 1
+            try:
+                batch = next(batch_gen['train'])
+            except StopIteration:
+                break
+            for pid in batch['pid']:
+                seen_pids.append(pid)
+            # print(f'\rtr. batch {bix}: {batch["pid"]}')
             tic_fw = time.time()
             results_dict = net.train_forward(batch)
             tic_bw = time.time()
             optimizer.zero_grad()
             results_dict['torch_loss'].backward()
             optimizer.step()
-            print('\rtr. batch {0}/{1} (ep. {2}) fw {3:.2f}s / bw {4:.2f} s / total {5:.2f} s || '.format(
-                bix + 1, cf.num_train_batches, epoch, tic_bw - tic_fw, time.time() - tic_bw,
+            print('\rtr. batch {0} (ep. {1}) fw {2:.2f}s / bw {3:.2f} s / total {4:.2f} s || '.format(
+                bix + 1, epoch, tic_bw - tic_fw, time.time() - tic_bw,
                 time.time() - tic_fw) + results_dict['logger_string'], flush=True, end="")
             train_results_list.append(({k:v for k,v in results_dict.items() if k != "seg_preds"}, batch["pid"]))
+        # print(np.unique(seen_pids, return_counts=True))
         print()
 
         _, monitor_metrics['train'] = train_evaluator.evaluate_predictions(train_results_list, monitor_metrics['train'])
@@ -137,8 +147,11 @@ def train(logger):
             if cf.do_validation:
                 val_results_list = []
                 val_predictor = Predictor(cf, net, logger, mode='val')
-                for _ in range(batch_gen['n_val']):
-                    batch = next(batch_gen[cf.val_mode])
+                while True:
+                    try:
+                        batch = next(batch_gen[cf.val_mode])
+                    except StopIteration:
+                        break
                     if cf.val_mode == 'val_patient':
                         results_dict = val_predictor.predict_patient(batch)
                     elif cf.val_mode == 'val_sampling':
@@ -297,10 +310,10 @@ if __name__ == '__main__':
 
         cf = utils.prep_exp(args.exp_source, args.exp_dir, args.server_env, args.use_stored_settings)
         if args.dev:
-            folds = [0,1]
+            folds = [0, 1]
             cf.batch_size, cf.num_epochs, cf.min_save_thresh, cf.save_n_models = 3 if cf.dim==2 else 1, 1, 0, 2
             cf.num_train_batches, cf.num_val_batches, cf.max_val_patients = 5, 1, 1
-            cf.test_n_epochs =  cf.save_n_models
+            cf.test_n_epochs = cf.save_n_models
             cf.max_test_patients = 2
 
         cf.data_dest = args.data_dest

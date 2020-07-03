@@ -213,6 +213,9 @@ def create_data_gen_pipeline(patient_data, cf, is_training=True):
     :return: multithreaded_generator
     """
 
+    # Set n_workers if too high
+    cf.n_workers = min(cf.n_workers, int(np.ceil(len(patient_data) / cf.batch_size)))
+
     # create instance of batch generator as first element in pipeline.
     data_gen = BatchGenerator(patient_data, batch_size=cf.batch_size, cf=cf)
 
@@ -251,23 +254,53 @@ class BatchGenerator(SlimDataLoaderBase):
     :return dictionary containing the batch data (b, c, y, x(, z)) / seg (b, 1, y, x(, z)) / pids / class_target
     """
     def __init__(self, data, batch_size, cf):
-        super(BatchGenerator, self).__init__(data, batch_size)
+        super(BatchGenerator, self).__init__(data, batch_size, number_of_threads_in_multithreaded=cf.n_workers)
 
         self.cf = cf
         self.crop_margin = np.array(self.cf.patch_size)/8. #min distance of ROI center to edge of cropped_patch.
         self.p_fg = 0.5
+        self.init_pos = 0
+        self.thread_workload = int(np.ceil(len(self._data) / self.number_of_threads_in_multithreaded))
+        self.cur_position = 0
+        self.seed = 0
+        self.was_initialized = False
+        self.data_ixs = np.arange(len(self._data))
+
+    def reset(self):
+        np.random.seed(self.seed)
+        self.seed = self.seed + 1
+        np.random.shuffle(self.data_ixs)
+        # print(f"Data (thread {self.thread_id}) shuffled")
+        self.init_pos = self.thread_id * self.thread_workload
+        self.cur_position = self.init_pos
+        self.was_initialized = True
 
     def generate_train_batch(self):
 
         batch_data, batch_segs, batch_pids, batch_targets, batch_patient_labels = [], [], [], [], []
-        class_targets_list =  [v['class_target'] for (k, v) in self._data.items()]
+        class_targets_list = [v['class_target'] for (k, v) in self._data.items()]
 
         if self.cf.head_classes > 2:
             # samples patients towards equilibrium of foreground classes on a roi-level (after randomly sampling the ratio "batch_sample_slack).
             batch_ixs = dutils.get_class_balanced_patients(
                 class_targets_list, self.batch_size, self.cf.head_classes - 1, slack_factor=self.cf.batch_sample_slack)
         else:
-            batch_ixs = np.random.choice(len(class_targets_list), self.batch_size)
+            # TODO: batch_ixs = np.random.choice(len(class_targets_list), self.batch_size)
+            if not self.was_initialized:
+                self.reset()
+            start_ix = self.cur_position
+            last_ix = start_ix + self.batch_size
+            if start_ix < self.init_pos + self.thread_workload:
+                if last_ix > self.init_pos + self.thread_workload:
+                    last_ix = self.init_pos + self.thread_workload
+                self.cur_position = last_ix
+                batch_ixs = self.data_ixs[start_ix:last_ix] % len(self._data)
+                if len(batch_ixs) < self.batch_size:
+                    batch_ixs = np.concatenate((batch_ixs, np.arange(self.batch_size-len(batch_ixs))))
+                # print(f'thread {self.thread_id}: {batch_ixs}')
+            else:
+                self.reset()
+                raise StopIteration
 
         patients = list(self._data.items())
 
