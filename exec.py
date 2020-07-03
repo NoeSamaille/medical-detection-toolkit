@@ -130,7 +130,7 @@ def train(logger):
                 bix + 1, epoch, tic_bw - tic_fw, time.time() - tic_bw,
                 time.time() - tic_fw) + results_dict['logger_string'], flush=True, end="")
             train_results_list.append(({k:v for k,v in results_dict.items() if k != "seg_preds"}, batch["pid"]))
-        # print(np.unique(seen_pids, return_counts=True))
+        print(f"Seen pids (unique): {len(np.unique(seen_pids))}")
         print()
 
         _, monitor_metrics['train'] = train_evaluator.evaluate_predictions(train_results_list, monitor_metrics['train'])
