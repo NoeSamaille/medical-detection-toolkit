@@ -364,13 +364,19 @@ def pp_patient(inputs):
 
     ix, path = inputs
     pid = path.split('/')[-1]
+    if os.path.exists(os.path.join(cf.pp_dir, 'meta_info_{}.pickle'.format(pid))):
+        print(f"{pid} already preprocessed")
+        return
     if not os.path.exists(os.path.join(cf.pp_dir, f'{pid}_img.npy')):
         scan_path = os.path.join(path, f'{pid.replace("-AUG", "")}_CT_0.nrrd') if 'AUG' in pid else os.path.join(path, f'{pid}_CT.nrrd')
+        if not os.path.exists(scan_path):
+            print(f"{scan_path} does not exists, skip it!")
+            return
         sliceim, _, original_spacing, _ = preprocess_image(scan_path, os.path.join(cf.pp_dir, f'{pid}_img.npy'))
     else:
         print(f"{pid} image already exists, load it...")
         sliceim = np.load(os.path.join(cf.pp_dir, f'{pid}_img.npy'))
-        original_spacing = sitk.ReadImage(os.path.join(path, f'{pid}_CT.nrrd')).GetSpacing()
+        original_spacing = sitk.ReadImage(os.path.join(path, f'{pid.replace("-AUG", "")}_CT_0.nrrd' if 'AUG' in pid else f'{pid}_CT.nrrd')).GetSpacing()
 
     char_path = 'characteristics_aug.csv' if 'AUG' in pid else 'characteristics.csv'
     df = pd.read_csv(os.path.join(cf.root_dir, char_path), sep=';') # 'characteristics.csv'

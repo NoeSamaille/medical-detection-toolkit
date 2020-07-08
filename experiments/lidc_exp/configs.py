@@ -76,7 +76,8 @@ class configs(DefaultConfigs):
         #      Data Loader      #
         #########################
 
-        self.gan_dataset = False
+        self.gan_dataset = True
+        self.gan_prop = 0.0  # Proportion of train set that will be generated using GAN
         self.train_set_proportion = 1.0
 
         self.n_cv_splits = 10  # 10 to split data 80 train - 10 val - 10 test

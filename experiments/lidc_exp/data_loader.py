@@ -73,8 +73,13 @@ def get_train_generators(cf, logger):
         train_pids += [all_pids_list[ix] for ix in test_ix]
 
     if cf.gan_dataset:
-        gan_pids = [v['pid'] for (k, v) in all_data.items() if 'AUG' in v['pid']]
-        train_pids += gan_pids
+        gan_pids = [v['pid'].replace('-AUG', '') for (k, v) in all_data.items() if 'AUG' in v['pid']]
+        gan_pids = np.intersect1d(gan_pids, train_pids)
+        gan_pids = [gpid + '-AUG' for gpid in gan_pids]
+        if cf.gan_prop > 0.0:
+            np.random.shuffle(gan_pids)
+            gan_pids = gan_pids[:int(np.floor(len(train_pids) * cf.gan_prop))]
+        train_pids = np.concatenate((train_pids, gan_pids))
 
     train_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in train_pids)}
     val_data = {k: v for (k, v) in all_data.items() if any(p == v['pid'] for p in val_pids)}
